@@ -1,0 +1,38 @@
+[data-theme="light"] {
+  --pm-bg: var(--gray-50);
+  --pm-surface: var(--white);
+  --pm-surface-hover: var(--gray-100);
+  --pm-surface-active: var(--gray-200);
+  --pm-border: var(--gray-200);
+  --pm-border-subtle: var(--gray-100);
+
+  --pm-text-primary: var(--gray-900);
+  --pm-text-secondary: var(--gray-600);
+  --pm-text-muted: var(--gray-400);
+
+  --pm-accent: var(--blue-600);
+  --pm-accent-hover: var(--blue-500);
+  --pm-accent-text: var(--white);
+
+  --pm-success: var(--green-500);
+  --pm-danger: var(--red-500);
+  --pm-warning: var(--yellow-500);
+  --pm-info: var(--cyan-500);
+
+  --pm-sidebar-bg: var(--white);
+  --pm-sidebar-active: var(--gray-100);
+  --pm-sidebar-text: var(--gray-500);
+  --pm-sidebar-text-active: var(--gray-900);
+
+  --pm-badge-running-bg: rgba(34, 197, 94, 0.1);
+  --pm-badge-running-text: var(--green-500);
+  --pm-badge-error-bg: rgba(239, 68, 68, 0.1);
+  --pm-badge-error-text: var(--red-500);
+  --pm-badge-stopped-bg: rgba(107, 114, 128, 0.1);
+  --pm-badge-stopped-text: var(--gray-500);
+
+  --pm-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --pm-radius: 8px;
+  --pm-radius-sm: 4px;
+  --pm-radius-lg: 12px;
+}
