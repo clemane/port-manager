@@ -1,4 +1,5 @@
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
 
 #[derive(Debug, Serialize, Clone)]
@@ -32,33 +33,57 @@ fn tcp_state(state: &str) -> &'static str {
     }
 }
 
-fn get_process_for_inode(inode: &str) -> Option<(u32, String)> {
-    let proc_dir = fs::read_dir("/proc").ok()?;
+/// Build a mapping of socket inode -> (pid, process_name) by scanning /proc once.
+/// This is O(total_fds) instead of O(connections * total_fds).
+fn build_inode_map() -> HashMap<String, (u32, String)> {
+    let mut map = HashMap::new();
+    let proc_dir = match fs::read_dir("/proc") {
+        Ok(d) => d,
+        Err(_) => return map,
+    };
+
     for entry in proc_dir.flatten() {
         let pid_str = entry.file_name().to_string_lossy().to_string();
-        if let Ok(pid) = pid_str.parse::<u32>() {
-            let fd_dir = format!("/proc/{}/fd", pid);
-            if let Ok(fds) = fs::read_dir(&fd_dir) {
-                for fd in fds.flatten() {
-                    if let Ok(link) = fs::read_link(fd.path()) {
-                        let link_str = link.to_string_lossy();
-                        if link_str.contains(&format!("socket:[{}]", inode)) {
-                            let comm = fs::read_to_string(format!("/proc/{}/comm", pid))
+        let pid: u32 = match pid_str.parse() {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        let fd_dir = format!("/proc/{}/fd", pid);
+        let fds = match fs::read_dir(&fd_dir) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+
+        // Read comm lazily (only if we find a socket)
+        let mut comm: Option<String> = None;
+
+        for fd in fds.flatten() {
+            if let Ok(link) = fs::read_link(fd.path()) {
+                let link_str = link.to_string_lossy();
+                if let Some(start) = link_str.find("socket:[") {
+                    let inode_start = start + 8;
+                    if let Some(end) = link_str[inode_start..].find(']') {
+                        let inode = &link_str[inode_start..inode_start + end];
+                        let name = comm.get_or_insert_with(|| {
+                            fs::read_to_string(format!("/proc/{}/comm", pid))
                                 .unwrap_or_default()
                                 .trim()
-                                .to_string();
-                            return Some((pid, comm));
-                        }
+                                .to_string()
+                        });
+                        map.insert(inode.to_string(), (pid, name.clone()));
                     }
                 }
             }
         }
     }
-    None
+    map
 }
 
 pub fn scan_ports() -> Vec<SystemPort> {
+    let inode_map = build_inode_map();
     let mut ports = Vec::new();
+
     for (file, proto) in [("/proc/net/tcp", "tcp"), ("/proc/net/tcp6", "tcp6")] {
         if let Ok(content) = fs::read_to_string(file) {
             for line in content.lines().skip(1) {
@@ -78,8 +103,9 @@ pub fn scan_ports() -> Vec<SystemPort> {
                 let state = tcp_state(fields[3]).to_string();
                 let inode = fields[9];
 
-                let (pid, process_name) = get_process_for_inode(inode)
-                    .map(|(p, n)| (Some(p), Some(n)))
+                let (pid, process_name) = inode_map
+                    .get(inode)
+                    .map(|(p, n)| (Some(*p), Some(n.clone())))
                     .unwrap_or((None, None));
 
                 ports.push(SystemPort {
