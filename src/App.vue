@@ -1,21 +1,21 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import { useTheme, type Theme } from '@/composables/useTheme'
 
-const currentTheme = ref('dark')
+const { currentTheme, loadTheme, setTheme } = useTheme()
 
-function setTheme(theme: string) {
-  currentTheme.value = theme
-  document.documentElement.setAttribute('data-theme', theme)
-}
-
-onMounted(() => {
-  document.documentElement.setAttribute('data-theme', currentTheme.value)
+onMounted(async () => {
+  await loadTheme()
 })
+
+function onThemeChange(theme: string) {
+  setTheme(theme as Theme)
+}
 </script>
 
 <template>
-  <AppLayout :current-theme="currentTheme" @theme-change="setTheme">
+  <AppLayout :current-theme="currentTheme" @theme-change="onThemeChange">
     <router-view />
   </AppLayout>
 </template>
