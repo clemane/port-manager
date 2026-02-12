@@ -180,6 +180,27 @@ pub async fn list_forwards(state: State<'_, AppState>) -> Result<Vec<ActiveForwa
     Ok(forwards)
 }
 
+/// Find forwards that were marked as "running" from a previous session (stale)
+/// and mark them as "stopped". Processes are dead after an app restart, so their
+/// PIDs are no longer valid.
+pub async fn cleanup_stale_forwards(pool: &SqlitePool) -> Result<Vec<ActiveForward>, String> {
+    // Find forwards that were "running" (stale from previous session)
+    let stale: Vec<ActiveForward> = sqlx::query_as(
+        "SELECT id, favorite_id, kubeconfig_id, namespace, resource_type, resource_name, remote_port, local_port, pid, status, started_at, error_msg FROM active_forwards WHERE status = 'running'"
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Mark them all as stopped (processes are dead after app restart)
+    sqlx::query("UPDATE active_forwards SET status = 'stopped', pid = NULL WHERE status = 'running'")
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(stale)
+}
+
 /// Check whether a given TCP port is already bound on localhost.
 fn is_port_in_use(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
