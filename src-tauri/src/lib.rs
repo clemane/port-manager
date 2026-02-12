@@ -1,5 +1,8 @@
 mod db;
+mod favorites;
+mod kubeconfig;
 mod ports;
+mod settings;
 
 use tauri::Manager;
 
@@ -36,7 +39,17 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_system_ports])
+        .invoke_handler(tauri::generate_handler![
+            get_system_ports,
+            kubeconfig::import_kubeconfig,
+            kubeconfig::list_kubeconfigs,
+            kubeconfig::delete_kubeconfig,
+            favorites::save_favorite,
+            favorites::list_favorites,
+            favorites::delete_favorite,
+            settings::get_setting,
+            settings::set_setting,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
