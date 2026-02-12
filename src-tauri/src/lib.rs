@@ -37,6 +37,16 @@ pub fn run() {
             let pool = tauri::async_runtime::block_on(db::init_db(app_dir))
                 .expect("failed to initialize database");
 
+            // Clean up forwards that were "running" in a previous session.
+            // After a restart, those kubectl processes are dead so we mark them stopped.
+            let stale_count = tauri::async_runtime::block_on(forward::cleanup_stale_forwards(&pool))
+                .map(|stale| stale.len())
+                .unwrap_or(0);
+
+            if stale_count > 0 {
+                log::info!("{} stale forwards cleaned up on startup", stale_count);
+            }
+
             app.manage(AppState { db: pool });
 
             Ok(())
