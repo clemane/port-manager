@@ -1,5 +1,7 @@
 mod db;
 mod favorites;
+mod forward;
+mod k8s;
 mod kubeconfig;
 mod ports;
 mod settings;
@@ -49,6 +51,13 @@ pub fn run() {
             favorites::delete_favorite,
             settings::get_setting,
             settings::set_setting,
+            k8s::list_namespaces,
+            k8s::list_services,
+            k8s::list_pods,
+            forward::create_forward,
+            forward::kill_forward,
+            forward::restart_forward,
+            forward::list_forwards,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
