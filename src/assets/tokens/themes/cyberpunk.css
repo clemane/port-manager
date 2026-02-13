@@ -3,6 +3,7 @@
   --pm-surface: #0a0a1a;
   --pm-surface-hover: #12122a;
   --pm-surface-active: #1a1a3a;
+  --pm-surface-elevated: #0f0f24;
   --pm-border: #1e1e3e;
   --pm-border-subtle: #14142a;
 
@@ -13,6 +14,7 @@
   --pm-accent: var(--magenta-500);
   --pm-accent-hover: var(--magenta-400);
   --pm-accent-text: var(--black);
+  --pm-accent-glow: rgba(217, 70, 239, 0.2);
 
   --pm-success: var(--cyan-400);
   --pm-danger: var(--magenta-500);
@@ -36,7 +38,10 @@
   --pm-radius-sm: 2px;
   --pm-radius-lg: 8px;
 
-  /* Cyberpunk-specific glow */
   --pm-glow-cyan: 0 0 10px rgba(34, 211, 238, 0.3);
   --pm-glow-magenta: 0 0 10px rgba(217, 70, 239, 0.3);
+
+  --pm-gradient-ambiance: radial-gradient(ellipse at 20% 80%, rgba(6, 182, 212, 0.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 20%, rgba(217, 70, 239, 0.04) 0%, transparent 50%);
+  --pm-status-pulse-color: var(--cyan-400);
 }

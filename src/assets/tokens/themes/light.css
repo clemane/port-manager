@@ -1,38 +1,43 @@
 [data-theme="light"] {
-  --pm-bg: var(--gray-50);
-  --pm-surface: var(--white);
-  --pm-surface-hover: var(--gray-100);
-  --pm-surface-active: var(--gray-200);
-  --pm-border: var(--gray-200);
-  --pm-border-subtle: var(--gray-100);
+  --pm-bg: #f6f8fa;
+  --pm-surface: #ffffff;
+  --pm-surface-hover: #f3f4f6;
+  --pm-surface-active: #eaeef2;
+  --pm-surface-elevated: #f0f3f6;
+  --pm-border: #d0d7de;
+  --pm-border-subtle: #e8ebef;
 
-  --pm-text-primary: var(--gray-900);
-  --pm-text-secondary: var(--gray-600);
-  --pm-text-muted: var(--gray-400);
+  --pm-text-primary: #1f2328;
+  --pm-text-secondary: #656d76;
+  --pm-text-muted: #8c959f;
 
-  --pm-accent: var(--blue-600);
-  --pm-accent-hover: var(--blue-500);
+  --pm-accent: #0969da;
+  --pm-accent-hover: #0550ae;
   --pm-accent-text: var(--white);
+  --pm-accent-glow: rgba(9, 105, 218, 0.15);
 
-  --pm-success: var(--green-500);
-  --pm-danger: var(--red-500);
-  --pm-warning: var(--yellow-500);
-  --pm-info: var(--cyan-500);
+  --pm-success: #1a7f37;
+  --pm-danger: #cf222e;
+  --pm-warning: #9a6700;
+  --pm-info: #0969da;
 
-  --pm-sidebar-bg: var(--white);
-  --pm-sidebar-active: var(--gray-100);
-  --pm-sidebar-text: var(--gray-500);
-  --pm-sidebar-text-active: var(--gray-900);
+  --pm-sidebar-bg: #ffffff;
+  --pm-sidebar-active: #f3f4f6;
+  --pm-sidebar-text: #656d76;
+  --pm-sidebar-text-active: #1f2328;
 
-  --pm-badge-running-bg: rgba(34, 197, 94, 0.1);
-  --pm-badge-running-text: var(--green-500);
-  --pm-badge-error-bg: rgba(239, 68, 68, 0.1);
-  --pm-badge-error-text: var(--red-500);
-  --pm-badge-stopped-bg: rgba(107, 114, 128, 0.1);
-  --pm-badge-stopped-text: var(--gray-500);
+  --pm-badge-running-bg: rgba(26, 127, 55, 0.1);
+  --pm-badge-running-text: #1a7f37;
+  --pm-badge-error-bg: rgba(207, 34, 46, 0.1);
+  --pm-badge-error-text: #cf222e;
+  --pm-badge-stopped-bg: rgba(140, 149, 159, 0.12);
+  --pm-badge-stopped-text: #656d76;
 
-  --pm-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  --pm-shadow: 0 1px 3px rgba(31, 35, 40, 0.12), 0 1px 2px rgba(31, 35, 40, 0.06);
   --pm-radius: 8px;
-  --pm-radius-sm: 4px;
+  --pm-radius-sm: 6px;
   --pm-radius-lg: 12px;
+
+  --pm-gradient-ambiance: radial-gradient(ellipse at 50% 0%, rgba(9, 105, 218, 0.04) 0%, transparent 70%);
+  --pm-status-pulse-color: #1a7f37;
 }
