@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from 'vue'
-import { PmButton, PmBadge, PmModal, PmInput, PmTreeView } from '@/components/ui'
+import { PmButton, PmBadge, PmModal, PmInput, PmTreeView, PmConnectionModal, PmCredentialPicker } from '@/components/ui'
+import type { ConnectionFormData, ConnectionInitialValues } from '@/components/ui'
 import { useK8s } from '@/composables/useK8s'
+import { useDbDetection } from '@/composables/useDbDetection'
+import { usePgManager } from '@/composables/usePgManager'
 import { invoke } from '@tauri-apps/api/core'
+import { useRouter } from 'vue-router'
 import type { TreeNode } from '@/types/tree'
-import type { ServicePort, PodPort } from '@/types/k8s'
+import type { ServicePort, PodPort, DetectedCredentials } from '@/types/k8s'
+import type { ActiveForward } from '@/composables/useForwards'
 
 interface ResourceData {
   type: string
@@ -22,6 +27,16 @@ const selectedResource = ref<ResourceData | null>(null)
 const showForwardModal = ref(false)
 const forwardPort = ref<number>(0)
 const localPort = ref<string>('')
+
+const router = useRouter()
+const { detecting, detectedCreds, detectError, detectCredentials, reset: resetDetection } = useDbDetection()
+const { saveConnection } = usePgManager()
+
+const dbCheckbox = ref(false)
+const showCredentialPicker = ref(false)
+const showConnectionModal = ref(false)
+const connectionInitialValues = ref<ConnectionInitialValues | null>(null)
+const dbForwardId = ref<string | null>(null)
 
 onMounted(async () => {
   await loadKubeconfigs()
@@ -109,7 +124,7 @@ function openForwardModal(port: number) {
 async function createForward() {
   if (!selectedResource.value || !selectedCluster.value || !selectedNamespace.value) return
   try {
-    await invoke('create_forward', {
+    const result = await invoke<ActiveForward>('create_forward', {
       kubeconfigId: selectedCluster.value,
       namespace: selectedNamespace.value,
       resourceType: selectedResource.value.type,
@@ -119,9 +134,66 @@ async function createForward() {
       favoriteId: null,
     })
     showForwardModal.value = false
+
+    if (dbCheckbox.value && result) {
+      dbForwardId.value = result.id ?? null
+      const lp = result.local_port ?? (localPort.value ? parseInt(localPort.value) : forwardPort.value)
+      connectionInitialValues.value = {
+        host: '127.0.0.1',
+        port: lp,
+        forwardId: result.id ?? undefined,
+      }
+      await detectCredentials(selectedCluster.value, selectedNamespace.value)
+      if (detectedCreds.value.length > 1) {
+        showCredentialPicker.value = true
+      } else if (detectedCreds.value.length === 1) {
+        applyCredential(detectedCreds.value[0])
+      } else {
+        showConnectionModal.value = true
+      }
+    }
   } catch (e) {
     alert(String(e))
   }
+}
+
+function applyCredential(cred: DetectedCredentials) {
+  showCredentialPicker.value = false
+  connectionInitialValues.value = {
+    ...connectionInitialValues.value,
+    host: cred.host ?? connectionInitialValues.value?.host ?? '127.0.0.1',
+    port: cred.port ?? connectionInitialValues.value?.port ?? 5432,
+    databaseName: cred.database ?? undefined,
+    username: cred.username ?? undefined,
+    password: cred.password ?? undefined,
+    sslMode: cred.ssl_mode ?? undefined,
+    label: cred.source,
+    forwardId: dbForwardId.value ?? undefined,
+  }
+  showConnectionModal.value = true
+}
+
+function onCredentialPickerManual() {
+  showCredentialPicker.value = false
+  showConnectionModal.value = true
+}
+
+async function onConnectionSave(data: ConnectionFormData) {
+  await saveConnection({
+    label: data.label || undefined,
+    forwardId: data.forwardId || undefined,
+    favoriteId: data.favoriteId || undefined,
+    host: data.host,
+    port: data.port,
+    databaseName: data.databaseName,
+    username: data.username,
+    password: data.password || undefined,
+    sslMode: data.sslMode,
+    color: data.color || undefined,
+  })
+  showConnectionModal.value = false
+  resetDetection()
+  router.push('/database')
 }
 </script>
 
@@ -221,12 +293,36 @@ async function createForward() {
           Local port (leave empty for auto)
           <PmInput v-model="localPort" type="number" placeholder="Auto-detect" />
         </label>
+        <label class="form-checkbox">
+          <input type="checkbox" v-model="dbCheckbox" />
+          <span>Open Database Manager</span>
+        </label>
       </div>
       <template #footer>
         <PmButton variant="ghost" @click="showForwardModal = false">Cancel</PmButton>
         <PmButton @click="createForward">Forward</PmButton>
       </template>
     </PmModal>
+
+    <PmCredentialPicker
+      :open="showCredentialPicker"
+      :credentials="detectedCreds"
+      :loading="detecting"
+      :error="detectError"
+      @close="showCredentialPicker = false"
+      @select="applyCredential"
+      @manual="onCredentialPickerManual"
+    />
+
+    <PmConnectionModal
+      :open="showConnectionModal"
+      :connection="null"
+      :forwards="[]"
+      :favorites="[]"
+      :initial-values="connectionInitialValues"
+      @close="showConnectionModal = false"
+      @save="onConnectionSave"
+    />
   </div>
 </template>
 
@@ -417,4 +513,21 @@ async function createForward() {
 .forward-form { display: flex; flex-direction: column; gap: 12px; }
 .forward-info { font-family: var(--pm-font-mono); color: var(--pm-text-secondary); font-size: 13px; margin: 0; }
 .form-label { font-family: var(--pm-font-body); font-size: 13px; color: var(--pm-text-secondary); display: flex; flex-direction: column; gap: 6px; }
+
+.form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--pm-font-body);
+  font-size: 13px;
+  color: var(--pm-text-secondary);
+  cursor: pointer;
+  margin-top: 4px;
+}
+
+.form-checkbox input[type="checkbox"] {
+  accent-color: var(--pm-accent);
+  width: 14px;
+  height: 14px;
+}
 </style>
