@@ -5,13 +5,17 @@ mod forward;
 mod k8s;
 mod kubeconfig;
 mod ngrok;
+mod pgmanager;
 mod ports;
 mod settings;
 
+use std::collections::HashMap;
+use std::sync::Arc;
 use tauri::Manager;
 
 pub struct AppState {
     pub db: sqlx::sqlite::SqlitePool,
+    pub pg_pools: Arc<tokio::sync::Mutex<HashMap<String, deadpool_postgres::Pool>>>,
 }
 
 #[tauri::command]
@@ -74,7 +78,10 @@ pub fn run() {
                 log::info!("{} stale ngrok tunnels cleaned up on startup", ngrok_stale_count);
             }
 
-            app.manage(AppState { db: pool });
+            app.manage(AppState {
+                db: pool,
+                pg_pools: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            });
 
             Ok(())
         })
@@ -105,6 +112,12 @@ pub fn run() {
             ngrok::list_tunnels,
             ngrok::sync_ngrok_domains,
             ngrok::detect_running_tunnels,
+            pgmanager::pg_save_connection,
+            pgmanager::pg_list_connections,
+            pgmanager::pg_delete_connection,
+            pgmanager::pg_test_connection,
+            pgmanager::pg_connect,
+            pgmanager::pg_disconnect,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
