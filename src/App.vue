@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import { PmMatrixRain } from '@/components/ui'
 import { useTheme, type Theme } from '@/composables/useTheme'
 
 const { currentTheme, loadTheme, setTheme } = useTheme()
@@ -40,6 +41,7 @@ function onThemeChange(theme: string) {
 </script>
 
 <template>
+  <PmMatrixRain :active="currentTheme === 'matrix'" />
   <AppLayout
     :current-theme="currentTheme"
     :forward-count="forwardCount"
