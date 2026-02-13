@@ -1,4 +1,4 @@
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import type {
   PgConnection,
@@ -32,27 +32,26 @@ export interface TestConnectionParams {
   password: string
 }
 
+// ── Module-level singleton state ──────────────────────────────────
+const connections = ref<PgConnection[]>([])
+const activeConnectionId = ref<string | null>(null)
+const connectedIds = ref<Set<string>>(new Set())
+
+const schemas = ref<string[]>([])
+const tables = ref<PgTableInfo[]>([])
+const columns = ref<PgColumnInfo[]>([])
+const indexes = ref<PgIndexInfo[]>([])
+
+const queryResult = ref<PgQueryResult | null>(null)
+const queryLoading = ref(false)
+const queryError = ref<string | null>(null)
+
+const queryHistory = ref<PgQueryHistoryEntry[]>([])
+const savedQueries = ref<PgSavedQuery[]>([])
+
+let initialized = false
+
 export function usePgManager() {
-  // ── Connection state ────────────────────────────────────────────────
-  const connections = ref<PgConnection[]>([])
-  const activeConnectionId = ref<string | null>(null)
-  const connectedIds = ref<Set<string>>(new Set())
-
-  // ── Schema state ────────────────────────────────────────────────────
-  const schemas = ref<string[]>([])
-  const tables = ref<PgTableInfo[]>([])
-  const columns = ref<PgColumnInfo[]>([])
-  const indexes = ref<PgIndexInfo[]>([])
-
-  // ── Query state ─────────────────────────────────────────────────────
-  const queryResult = ref<PgQueryResult | null>(null)
-  const queryLoading = ref(false)
-  const queryError = ref<string | null>(null)
-
-  // ── History & saved ─────────────────────────────────────────────────
-  const queryHistory = ref<PgQueryHistoryEntry[]>([])
-  const savedQueries = ref<PgSavedQuery[]>([])
-
   // ── Computed ────────────────────────────────────────────────────────
   const activeConnection = computed(() =>
     connections.value.find((c) => c.id === activeConnectionId.value) ?? null,
@@ -222,8 +221,11 @@ export function usePgManager() {
     await loadSavedQueries()
   }
 
-  // ── Lifecycle ───────────────────────────────────────────────────────
-  onMounted(() => loadConnections())
+  // ── Init guard (replaces onMounted) ─────────────────────────────────
+  if (!initialized) {
+    initialized = true
+    loadConnections()
+  }
 
   return {
     // State
