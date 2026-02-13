@@ -60,7 +60,7 @@ function onThemeChange(theme: string) {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: var(--pm-font-body), sans-serif;
   background: var(--pm-bg);
   color: var(--pm-text-primary);
   -webkit-font-smoothing: antialiased;
