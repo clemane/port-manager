@@ -162,8 +162,8 @@ function applyCredential(cred: DetectedCredentials) {
   showCredentialPicker.value = false
   connectionInitialValues.value = {
     ...connectionInitialValues.value,
-    host: cred.host ?? connectionInitialValues.value?.host ?? '127.0.0.1',
-    port: cred.port ?? connectionInitialValues.value?.port ?? 5432,
+    host: '127.0.0.1',
+    port: connectionInitialValues.value?.port ?? 5432,
     databaseName: cred.database ?? undefined,
     username: cred.username ?? undefined,
     password: cred.password ?? undefined,
