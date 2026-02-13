@@ -39,7 +39,7 @@ defineProps<{
 .pm-btn--lg { padding: 8px 18px; font-size: 14px; }
 
 .pm-btn--primary {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--pm-accent) 100%, white 8%) 0%, var(--pm-accent) 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--pm-accent) 92%, white) 0%, var(--pm-accent) 100%);
   color: var(--pm-accent-text);
   box-shadow: 0 1px 3px var(--pm-accent-glow);
 }

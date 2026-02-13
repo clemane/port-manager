@@ -1,12 +1,27 @@
 <script setup lang="ts">
-defineProps<{
+import { watch, onBeforeUnmount } from 'vue'
+
+const props = defineProps<{
   open: boolean
   title?: string
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   close: []
 }>()
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') emit('close')
+}
+
+watch(() => props.open, (open) => {
+  if (open) document.addEventListener('keydown', onKeydown)
+  else document.removeEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>

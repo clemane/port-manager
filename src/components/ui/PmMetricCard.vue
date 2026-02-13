@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onBeforeUnmount } from 'vue'
 
 const props = withDefaults(defineProps<{
   label: string
@@ -43,6 +43,10 @@ watch(() => props.value, (newVal, oldVal) => {
 
 onMounted(() => {
   animateValue(0, props.value)
+})
+
+onBeforeUnmount(() => {
+  cancelAnimationFrame(rafId)
 })
 </script>
 

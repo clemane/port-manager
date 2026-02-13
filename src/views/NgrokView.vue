@@ -149,7 +149,7 @@ async function handleDetect() {
 <style scoped>
 .ngrok__launch-card {
   background: var(--pm-surface-elevated);
-  border: 1px solid var(--pm-border);
+  border: 1px solid color-mix(in srgb, var(--pm-accent) 40%, var(--pm-border));
   border-radius: var(--pm-radius);
   padding: 20px;
   margin-bottom: 24px;
