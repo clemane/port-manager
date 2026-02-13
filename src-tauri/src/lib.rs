@@ -99,6 +99,7 @@ pub fn run() {
             k8s::list_namespaces,
             k8s::list_services,
             k8s::list_pods,
+            k8s::detect_db_credentials,
             forward::create_forward,
             forward::kill_forward,
             forward::restart_forward,
