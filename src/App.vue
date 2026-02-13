@@ -9,6 +9,7 @@ const { currentTheme, loadTheme, setTheme } = useTheme()
 
 const forwardCount = ref(0)
 const listeningPorts = ref(0)
+const tunnelCount = ref(0)
 let countInterval: ReturnType<typeof setInterval> | null = null
 
 async function refreshCounts() {
@@ -17,6 +18,8 @@ async function refreshCounts() {
     forwardCount.value = forwards.filter(f => f.status === 'running').length
     const ports = await invoke<{ state: string }[]>('get_system_ports')
     listeningPorts.value = ports.filter(p => p.state === 'LISTEN').length
+    const tunnels = await invoke<{ status: string }[]>('list_tunnels')
+    tunnelCount.value = tunnels.filter(t => t.status === 'running').length
   } catch {
     // Ignore on startup before backend is ready
   }
@@ -46,10 +49,9 @@ function onThemeChange(theme: string) {
     :current-theme="currentTheme"
     :forward-count="forwardCount"
     :listening-ports="listeningPorts"
+    :tunnel-count="tunnelCount"
     @theme-change="onThemeChange"
-  >
-    <router-view />
-  </AppLayout>
+  />
 </template>
 
 <style>
