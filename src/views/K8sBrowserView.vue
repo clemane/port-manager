@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue'
-import { PmSelect, PmButton, PmBadge, PmModal, PmInput, PmTreeView } from '@/components/ui'
+import { ref, watch, onMounted, computed } from 'vue'
+import { PmButton, PmBadge, PmModal, PmInput, PmTreeView } from '@/components/ui'
 import { useK8s } from '@/composables/useK8s'
 import { invoke } from '@tauri-apps/api/core'
 import type { TreeNode } from '@/types/tree'
@@ -19,7 +19,6 @@ const selectedCluster = ref('')
 const selectedNamespace = ref('')
 const selectedResource = ref<ResourceData | null>(null)
 
-// Forward modal
 const showForwardModal = ref(false)
 const forwardPort = ref<number>(0)
 const localPort = ref<string>('')
@@ -31,6 +30,7 @@ onMounted(async () => {
 watch(selectedCluster, async (id) => {
   if (id) {
     selectedNamespace.value = ''
+    selectedResource.value = null
     services.value = []
     pods.value = []
     await loadNamespaces(id)
@@ -39,6 +39,7 @@ watch(selectedCluster, async (id) => {
 
 watch(selectedNamespace, async (ns) => {
   if (ns && selectedCluster.value) {
+    selectedResource.value = null
     await Promise.all([
       loadServices(selectedCluster.value, ns),
       loadPods(selectedCluster.value, ns),
@@ -46,12 +47,23 @@ watch(selectedNamespace, async (ns) => {
   }
 })
 
-const clusterOptions = () => kubeconfigs.value.map(k => ({ value: k.id, label: k.name }))
-const namespaceOptions = () => namespaces.value.map(ns => ({ value: ns, label: ns }))
+const expandedClusters = ref<Set<string>>(new Set())
 
-const treeNodes = (): TreeNode[] => {
+function toggleCluster(id: string) {
+  if (expandedClusters.value.has(id)) {
+    expandedClusters.value.delete(id)
+  } else {
+    expandedClusters.value.add(id)
+    selectedCluster.value = id
+  }
+}
+
+function selectNamespace(ns: string) {
+  selectedNamespace.value = ns
+}
+
+const treeNodes = computed((): TreeNode[] => {
   const nodes: TreeNode[] = []
-
   if (services.value.length > 0) {
     nodes.push({
       id: 'services',
@@ -63,7 +75,6 @@ const treeNodes = (): TreeNode[] => {
       })),
     })
   }
-
   if (pods.value.length > 0) {
     nodes.push({
       id: 'pods',
@@ -75,9 +86,8 @@ const treeNodes = (): TreeNode[] => {
       })),
     })
   }
-
   return nodes
-}
+})
 
 function onNodeSelect(node: TreeNode) {
   if (node.data) {
@@ -98,7 +108,6 @@ function openForwardModal(port: number) {
 
 async function createForward() {
   if (!selectedResource.value || !selectedCluster.value || !selectedNamespace.value) return
-
   try {
     await invoke('create_forward', {
       kubeconfigId: selectedCluster.value,
@@ -117,76 +126,98 @@ async function createForward() {
 </script>
 
 <template>
-  <div class="k8s-browser">
-    <div class="k8s-browser__header">
-      <h1 class="view-title">Kubernetes</h1>
-      <p class="view-subtitle">Browse clusters and resources</p>
-    </div>
-
-    <div class="k8s-browser__selectors">
-      <PmSelect
-        v-model="selectedCluster"
-        :options="clusterOptions()"
-        placeholder="Select cluster..."
-        :searchable="true"
-      />
-      <PmSelect
-        v-if="selectedCluster"
-        v-model="selectedNamespace"
-        :options="namespaceOptions()"
-        placeholder="Select namespace..."
-        :searchable="true"
-      />
-      <span v-if="loading" class="loading-text">Loading...</span>
-    </div>
-
-    <div v-if="selectedNamespace" class="k8s-browser__content">
-      <div class="k8s-browser__tree">
-        <PmTreeView
-          :nodes="treeNodes()"
-          @select="onNodeSelect"
-        />
+  <div class="k8s">
+    <div class="k8s__columns">
+      <!-- Column 1: Clusters & Namespaces -->
+      <div class="k8s__col k8s__col--clusters">
+        <div class="col-header">Clusters</div>
+        <div v-if="kubeconfigs.length === 0" class="col-empty">
+          No clusters imported
+        </div>
+        <div v-for="kc in kubeconfigs" :key="kc.id" class="cluster-group">
+          <button
+            class="cluster-item"
+            :class="{ 'cluster-item--active': selectedCluster === kc.id }"
+            @click="toggleCluster(kc.id)"
+          >
+            <svg class="cluster-item__chevron" :class="{ 'cluster-item__chevron--open': expandedClusters.has(kc.id) }" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M6 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="cluster-item__name">{{ kc.name }}</span>
+          </button>
+          <div v-if="expandedClusters.has(kc.id)" class="namespace-list">
+            <div v-if="loading" class="col-loading">Loading...</div>
+            <button
+              v-for="ns in namespaces"
+              :key="ns"
+              class="namespace-item"
+              :class="{ 'namespace-item--active': selectedNamespace === ns }"
+              @click="selectNamespace(ns)"
+            >
+              {{ ns }}
+            </button>
+            <div v-if="!loading && namespaces.length === 0" class="col-empty-small">No namespaces</div>
+          </div>
+        </div>
       </div>
 
-      <div v-if="selectedResource" class="k8s-browser__detail">
-        <h3 class="detail-title">
-          {{ selectedResource.name }}
-          <PmBadge v-if="selectedResource.type === 'pod'" :variant="selectedResource.status === 'Running' ? 'running' : 'stopped'">
-            {{ selectedResource.status }}
-          </PmBadge>
-        </h3>
-        <p class="detail-type">{{ selectedResource.type }}</p>
+      <!-- Column 2: Resources -->
+      <div class="k8s__col k8s__col--resources">
+        <div class="col-header">Resources</div>
+        <div v-if="selectedNamespace">
+          <div v-if="loading" class="col-loading">Loading...</div>
+          <PmTreeView
+            v-else
+            :nodes="treeNodes"
+            @select="onNodeSelect"
+          />
+          <div v-if="!loading && treeNodes.length === 0" class="col-empty">No resources found</div>
+        </div>
+        <div v-else class="col-empty">
+          Select a namespace
+        </div>
+      </div>
 
-        <div class="detail-ports">
-          <h4>Ports</h4>
-          <div v-for="(port, i) in selectedResource.ports" :key="i" class="port-item">
-            <span class="port-info">
-              {{ port.name || 'unnamed' }} —
-              {{ getPortNumber(port) }}/{{ port.protocol }}
-            </span>
-            <PmButton size="sm" @click="openForwardModal(getPortNumber(port))">
-              Forward
-            </PmButton>
+      <!-- Column 3: Details -->
+      <div class="k8s__col k8s__col--detail">
+        <div class="col-header">Details</div>
+        <div v-if="selectedResource" class="detail-panel">
+          <div class="detail-panel__header">
+            <h3 class="detail-panel__name">{{ selectedResource.name }}</h3>
+            <PmBadge v-if="selectedResource.type === 'pod' && selectedResource.status" :variant="selectedResource.status === 'Running' ? 'running' : 'stopped'">
+              {{ selectedResource.status }}
+            </PmBadge>
           </div>
-          <p v-if="selectedResource.ports.length === 0" class="no-ports">No ports exposed</p>
+          <span class="detail-panel__type">{{ selectedResource.type }}</span>
+
+          <div class="detail-panel__ports">
+            <div class="detail-panel__ports-header">Ports</div>
+            <div v-for="(port, i) in selectedResource.ports" :key="i" class="port-row">
+              <span class="port-row__info">
+                <span class="port-row__name">{{ port.name || 'unnamed' }}</span>
+                <span class="port-row__value">{{ getPortNumber(port) }}/{{ port.protocol }}</span>
+              </span>
+              <PmButton size="sm" @click="openForwardModal(getPortNumber(port))">
+                Forward
+              </PmButton>
+            </div>
+            <div v-if="selectedResource.ports.length === 0" class="col-empty-small">No ports exposed</div>
+          </div>
+        </div>
+        <div v-else class="col-empty col-empty--centered">
+          <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" width="48" height="48" opacity="0.3">
+            <circle cx="24" cy="24" r="18" />
+            <path d="M24 16v8m0 4h.01" stroke-linecap="round" />
+          </svg>
+          <span>Select a resource to view ports</span>
         </div>
       </div>
     </div>
 
-    <div v-else-if="selectedCluster" class="k8s-browser__empty">
-      Select a namespace to browse resources
-    </div>
-    <div v-else class="k8s-browser__empty">
-      Select a cluster to get started
-    </div>
-
-    <!-- Forward Modal -->
     <PmModal :open="showForwardModal" title="Create Port Forward" @close="showForwardModal = false">
       <div class="forward-form">
         <p class="forward-info">
           {{ selectedResource?.type }}/{{ selectedResource?.name }} : {{ forwardPort }}
         </p>
-        <label class="forward-label">
+        <label class="form-label">
           Local port (leave empty for auto)
           <PmInput v-model="localPort" type="number" placeholder="Auto-detect" />
         </label>
@@ -200,80 +231,190 @@ async function createForward() {
 </template>
 
 <style scoped>
-.k8s-browser__header { margin-bottom: 20px; }
-.view-title { font-size: 20px; font-weight: 600; color: var(--pm-text-primary); margin: 0 0 4px; }
-.view-subtitle { font-size: 13px; color: var(--pm-text-secondary); margin: 0; }
-
-.k8s-browser__selectors {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 20px;
-}
-.k8s-browser__selectors > * { min-width: 200px; }
-.loading-text { color: var(--pm-accent); font-size: 13px; }
-
-.k8s-browser__content {
+.k8s__columns {
   display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 20px;
-  min-height: 400px;
-}
-
-.k8s-browser__tree {
-  background: var(--pm-surface);
+  grid-template-columns: 200px 250px 1fr;
+  height: calc(100vh - 160px);
   border: 1px solid var(--pm-border);
   border-radius: var(--pm-radius);
-  padding: 8px;
+  overflow: hidden;
+}
+
+.k8s__col {
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
-  max-height: 60vh;
-}
-
-.k8s-browser__detail {
   background: var(--pm-surface);
-  border: 1px solid var(--pm-border);
-  border-radius: var(--pm-radius);
-  padding: 20px;
 }
 
-.detail-title {
-  font-size: 16px;
+.k8s__col--resources {
+  border-left: 1px solid var(--pm-border);
+  border-right: 1px solid var(--pm-border);
+}
+
+.col-header {
+  font-family: var(--pm-font-body);
+  font-size: 11px;
   font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pm-text-muted);
+  padding: 12px 12px 8px;
+  position: sticky;
+  top: 0;
+  background: var(--pm-surface);
+  z-index: 1;
+}
+
+.col-empty {
+  color: var(--pm-text-muted);
+  font-size: 13px;
+  padding: 20px 12px;
+  text-align: center;
+}
+
+.col-empty--centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 100%;
+  padding: 40px;
+}
+
+.col-empty-small {
+  color: var(--pm-text-muted);
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+.col-loading {
+  color: var(--pm-accent);
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+.cluster-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
   color: var(--pm-text-primary);
-  margin: 0 0 4px;
+  font-family: var(--pm-font-body);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.cluster-item:hover { background: var(--pm-surface-hover); }
+.cluster-item--active { color: var(--pm-accent); }
+
+.cluster-item__chevron {
+  flex-shrink: 0;
+  transition: transform 0.15s;
+}
+.cluster-item__chevron--open { transform: rotate(90deg); }
+
+.namespace-list {
+  padding: 0 0 4px 20px;
+}
+
+.namespace-item {
+  display: block;
+  width: 100%;
+  padding: 4px 12px;
+  background: none;
+  border: none;
+  color: var(--pm-text-secondary);
+  font-family: var(--pm-font-mono);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  border-radius: var(--pm-radius-sm);
+  transition: background 0.15s, color 0.15s;
+}
+
+.namespace-item:hover {
+  background: var(--pm-surface-hover);
+  color: var(--pm-text-primary);
+}
+
+.namespace-item--active {
+  background: var(--pm-surface-active);
+  color: var(--pm-accent);
+}
+
+.detail-panel {
+  padding: 16px;
+}
+
+.detail-panel__header {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-bottom: 4px;
 }
-.detail-type {
-  font-size: 12px;
+
+.detail-panel__name {
+  font-family: var(--pm-font-display);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--pm-text-primary);
+  margin: 0;
+}
+
+.detail-panel__type {
+  font-family: var(--pm-font-body);
+  font-size: 11px;
   color: var(--pm-text-muted);
-  margin: 0 0 20px;
   text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: block;
+  margin-bottom: 20px;
 }
-.detail-ports h4 {
-  font-size: 13px;
+
+.detail-panel__ports-header {
+  font-family: var(--pm-font-body);
+  font-size: 12px;
+  font-weight: 600;
   color: var(--pm-text-secondary);
-  margin: 0 0 8px;
+  margin-bottom: 8px;
 }
-.port-item {
+
+.port-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 8px 0;
   border-bottom: 1px solid var(--pm-border-subtle);
 }
-.port-info { font-family: monospace; font-size: 13px; }
-.no-ports { color: var(--pm-text-muted); font-size: 13px; }
 
-.k8s-browser__empty {
-  text-align: center;
-  padding: 60px 20px;
-  color: var(--pm-text-muted);
-  font-size: 14px;
+.port-row__info {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.port-row__name {
+  font-family: var(--pm-font-body);
+  font-size: 13px;
+  color: var(--pm-text-secondary);
+}
+
+.port-row__value {
+  font-family: var(--pm-font-mono);
+  font-size: 13px;
+  color: var(--pm-text-primary);
+  font-weight: 500;
 }
 
 .forward-form { display: flex; flex-direction: column; gap: 12px; }
-.forward-info { font-family: monospace; color: var(--pm-text-secondary); font-size: 13px; margin: 0; }
-.forward-label { font-size: 13px; color: var(--pm-text-secondary); display: flex; flex-direction: column; gap: 6px; }
+.forward-info { font-family: var(--pm-font-mono); color: var(--pm-text-secondary); font-size: 13px; margin: 0; }
+.form-label { font-family: var(--pm-font-body); font-size: 13px; color: var(--pm-text-secondary); display: flex; flex-direction: column; gap: 6px; }
 </style>
