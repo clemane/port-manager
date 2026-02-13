@@ -1,5 +1,8 @@
+use postgres_types::Type;
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use tauri::State;
+use tokio_postgres::Row;
 
 use crate::AppState;
 
@@ -21,6 +24,112 @@ pub struct PgConnection {
     pub color: Option<String>,
     pub created_at: String,
     pub last_used: Option<String>,
+}
+
+// ── Query Execution Models ─────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PgColumnMeta {
+    pub name: String,
+    pub data_type: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PgQueryResult {
+    pub columns: Vec<PgColumnMeta>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+    pub total_rows: Option<i64>,
+    pub affected_rows: Option<u64>,
+    pub duration_ms: u64,
+    pub query_type: String,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PgQueryHistoryEntry {
+    pub id: String,
+    pub connection_id: String,
+    pub sql_text: String,
+    pub executed_at: String,
+    pub duration_ms: Option<i64>,
+    pub row_count: Option<i64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct PgSavedQuery {
+    pub id: String,
+    pub connection_id: Option<String>,
+    pub label: String,
+    pub sql_text: String,
+    pub created_at: String,
+}
+
+// ── Row → JSON Helper ─────────────────────────────────────────────────
+
+fn row_to_json(row: &Row) -> Vec<serde_json::Value> {
+    let mut values = Vec::new();
+    for i in 0..row.len() {
+        let col_type = row.columns()[i].type_();
+        let value = match *col_type {
+            Type::BOOL => row
+                .get::<_, Option<bool>>(i)
+                .map(serde_json::Value::Bool)
+                .unwrap_or(serde_json::Value::Null),
+            Type::INT2 => row
+                .get::<_, Option<i16>>(i)
+                .map(|v| serde_json::Value::Number(v.into()))
+                .unwrap_or(serde_json::Value::Null),
+            Type::INT4 => row
+                .get::<_, Option<i32>>(i)
+                .map(|v| serde_json::Value::Number(v.into()))
+                .unwrap_or(serde_json::Value::Null),
+            Type::INT8 => row
+                .get::<_, Option<i64>>(i)
+                .map(|v| serde_json::Value::Number(v.into()))
+                .unwrap_or(serde_json::Value::Null),
+            Type::FLOAT4 => row
+                .get::<_, Option<f32>>(i)
+                .map(|v| serde_json::json!(v))
+                .unwrap_or(serde_json::Value::Null),
+            Type::FLOAT8 => row
+                .get::<_, Option<f64>>(i)
+                .map(|v| serde_json::json!(v))
+                .unwrap_or(serde_json::Value::Null),
+            Type::TEXT | Type::VARCHAR | Type::CHAR | Type::NAME | Type::BPCHAR => row
+                .get::<_, Option<String>>(i)
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+            Type::UUID => row
+                .get::<_, Option<uuid::Uuid>>(i)
+                .map(|v| serde_json::Value::String(v.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+            Type::JSON | Type::JSONB => row
+                .get::<_, Option<serde_json::Value>>(i)
+                .unwrap_or(serde_json::Value::Null),
+            Type::TIMESTAMP => row
+                .get::<_, Option<chrono::NaiveDateTime>>(i)
+                .map(|v| serde_json::Value::String(v.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+            Type::TIMESTAMPTZ => row
+                .get::<_, Option<chrono::DateTime<chrono::Utc>>>(i)
+                .map(|v| serde_json::Value::String(v.to_rfc3339()))
+                .unwrap_or(serde_json::Value::Null),
+            Type::BYTEA => row
+                .get::<_, Option<Vec<u8>>>(i)
+                .map(|v| {
+                    let hex: String = v.iter().map(|b| format!("{:02x}", b)).collect();
+                    serde_json::Value::String(format!("\\x{}", hex))
+                })
+                .unwrap_or(serde_json::Value::Null),
+            // Fallback: try to get as string
+            _ => row
+                .get::<_, Option<String>>(i)
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null),
+        };
+        values.push(value);
+    }
+    values
 }
 
 // ── Save (upsert) ──────────────────────────────────────────────────────
@@ -543,4 +652,280 @@ pub async fn pg_table_row_count(
 
     let count: i64 = row.get::<_, i64>(0);
     Ok(count)
+}
+
+// ── Query Execution ────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pg_execute_query(
+    id: String,
+    sql: String,
+    page: Option<i64>,
+    page_size: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<PgQueryResult, String> {
+    let page = page.unwrap_or(0);
+    let page_size = page_size.unwrap_or(100);
+
+    // Detect query type
+    let trimmed = sql.trim().to_uppercase();
+    let query_type = if trimmed.starts_with("SELECT")
+        || trimmed.starts_with("WITH")
+        || trimmed.starts_with("EXPLAIN")
+    {
+        "SELECT"
+    } else if trimmed.starts_with("INSERT") {
+        "INSERT"
+    } else if trimmed.starts_with("UPDATE") {
+        "UPDATE"
+    } else if trimmed.starts_with("DELETE") {
+        "DELETE"
+    } else {
+        "DDL"
+    };
+
+    let is_select = query_type == "SELECT";
+
+    // Get pool/client
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    // Drop the lock before executing the query
+    drop(pools);
+
+    let start = Instant::now();
+
+    let result = if is_select {
+        // Get total count (may fail for complex queries)
+        let count_sql = format!("SELECT count(*) FROM ({}) AS _count_subquery", sql);
+        let total_rows = match client.query_one(&count_sql, &[]).await {
+            Ok(row) => Some(row.get::<_, i64>(0)),
+            Err(_) => None,
+        };
+
+        // Execute with pagination
+        let paged_sql = format!("{} LIMIT {} OFFSET {}", sql, page_size, page * page_size);
+        match client.query(&paged_sql, &[]).await {
+            Ok(rows) => {
+                let columns: Vec<PgColumnMeta> = if !rows.is_empty() {
+                    rows[0]
+                        .columns()
+                        .iter()
+                        .map(|c| PgColumnMeta {
+                            name: c.name().to_string(),
+                            data_type: c.type_().name().to_string(),
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+                let row_count = rows.len() as i64;
+                let json_rows: Vec<Vec<serde_json::Value>> =
+                    rows.iter().map(|r| row_to_json(r)).collect();
+
+                let duration_ms = start.elapsed().as_millis() as u64;
+
+                // Record success in history
+                let history_id = uuid::Uuid::new_v4().to_string();
+                let _ = sqlx::query(
+                    "INSERT INTO pg_query_history (id, connection_id, sql_text, duration_ms, row_count, error) VALUES (?, ?, ?, ?, ?, ?)"
+                )
+                .bind(&history_id)
+                .bind(&id)
+                .bind(&sql)
+                .bind(duration_ms as i64)
+                .bind(row_count)
+                .bind::<Option<&str>>(None)
+                .execute(&state.db)
+                .await;
+
+                Ok(PgQueryResult {
+                    columns,
+                    rows: json_rows,
+                    total_rows,
+                    affected_rows: None,
+                    duration_ms,
+                    query_type: query_type.to_string(),
+                })
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+                let duration_ms = start.elapsed().as_millis() as u64;
+
+                // Record error in history
+                let history_id = uuid::Uuid::new_v4().to_string();
+                let _ = sqlx::query(
+                    "INSERT INTO pg_query_history (id, connection_id, sql_text, duration_ms, row_count, error) VALUES (?, ?, ?, ?, ?, ?)"
+                )
+                .bind(&history_id)
+                .bind(&id)
+                .bind(&sql)
+                .bind(duration_ms as i64)
+                .bind::<Option<i64>>(None)
+                .bind(&error_str)
+                .execute(&state.db)
+                .await;
+
+                Err(format!("Query failed: {e}"))
+            }
+        }
+    } else {
+        // DML/DDL
+        match client.execute(sql.as_str(), &[]).await {
+            Ok(affected) => {
+                let row_count = affected as i64;
+                let duration_ms = start.elapsed().as_millis() as u64;
+
+                // Record success in history
+                let history_id = uuid::Uuid::new_v4().to_string();
+                let _ = sqlx::query(
+                    "INSERT INTO pg_query_history (id, connection_id, sql_text, duration_ms, row_count, error) VALUES (?, ?, ?, ?, ?, ?)"
+                )
+                .bind(&history_id)
+                .bind(&id)
+                .bind(&sql)
+                .bind(duration_ms as i64)
+                .bind(row_count)
+                .bind::<Option<&str>>(None)
+                .execute(&state.db)
+                .await;
+
+                Ok(PgQueryResult {
+                    columns: Vec::new(),
+                    rows: Vec::new(),
+                    total_rows: None,
+                    affected_rows: Some(affected),
+                    duration_ms,
+                    query_type: query_type.to_string(),
+                })
+            }
+            Err(e) => {
+                let error_str = e.to_string();
+                let duration_ms = start.elapsed().as_millis() as u64;
+
+                // Record error in history
+                let history_id = uuid::Uuid::new_v4().to_string();
+                let _ = sqlx::query(
+                    "INSERT INTO pg_query_history (id, connection_id, sql_text, duration_ms, row_count, error) VALUES (?, ?, ?, ?, ?, ?)"
+                )
+                .bind(&history_id)
+                .bind(&id)
+                .bind(&sql)
+                .bind(duration_ms as i64)
+                .bind::<Option<i64>>(None)
+                .bind(&error_str)
+                .execute(&state.db)
+                .await;
+
+                Err(format!("Query failed: {e}"))
+            }
+        }
+    };
+
+    result
+}
+
+// ── Query History ──────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pg_list_query_history(
+    connection_id: String,
+    limit: Option<i64>,
+    state: State<'_, AppState>,
+) -> Result<Vec<PgQueryHistoryEntry>, String> {
+    let limit = limit.unwrap_or(50);
+
+    let entries: Vec<PgQueryHistoryEntry> = sqlx::query_as(
+        "SELECT id, connection_id, sql_text, executed_at, duration_ms, row_count, error \
+         FROM pg_query_history \
+         WHERE connection_id = ? \
+         ORDER BY executed_at DESC \
+         LIMIT ?",
+    )
+    .bind(&connection_id)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(entries)
+}
+
+// ── Saved Queries ──────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pg_save_query(
+    connection_id: Option<String>,
+    label: String,
+    sql_text: String,
+    state: State<'_, AppState>,
+) -> Result<PgSavedQuery, String> {
+    let id = uuid::Uuid::new_v4().to_string();
+
+    sqlx::query(
+        "INSERT INTO pg_saved_queries (id, connection_id, label, sql_text) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(&connection_id)
+    .bind(&label)
+    .bind(&sql_text)
+    .execute(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let saved: PgSavedQuery = sqlx::query_as(
+        "SELECT id, connection_id, label, sql_text, created_at FROM pg_saved_queries WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn pg_list_saved_queries(
+    connection_id: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<PgSavedQuery>, String> {
+    let queries: Vec<PgSavedQuery> = if let Some(conn_id) = connection_id {
+        sqlx::query_as(
+            "SELECT id, connection_id, label, sql_text, created_at \
+             FROM pg_saved_queries \
+             WHERE connection_id = ? \
+             ORDER BY created_at DESC",
+        )
+        .bind(&conn_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| e.to_string())?
+    } else {
+        sqlx::query_as(
+            "SELECT id, connection_id, label, sql_text, created_at \
+             FROM pg_saved_queries \
+             ORDER BY created_at DESC",
+        )
+        .fetch_all(&state.db)
+        .await
+        .map_err(|e| e.to_string())?
+    };
+
+    Ok(queries)
+}
+
+#[tauri::command]
+pub async fn pg_delete_saved_query(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    sqlx::query("DELETE FROM pg_saved_queries WHERE id = ?")
+        .bind(&id)
+        .execute(&state.db)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }

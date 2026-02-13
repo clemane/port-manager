@@ -123,6 +123,11 @@ pub fn run() {
             pgmanager::pg_list_columns,
             pgmanager::pg_list_indexes,
             pgmanager::pg_table_row_count,
+            pgmanager::pg_execute_query,
+            pgmanager::pg_list_query_history,
+            pgmanager::pg_save_query,
+            pgmanager::pg_list_saved_queries,
+            pgmanager::pg_delete_saved_query,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
