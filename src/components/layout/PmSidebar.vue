@@ -35,6 +35,7 @@ const navItems = [
   { path: '/k8s', label: 'Kubernetes', icon: 'k8s' },
   { path: '/forwards', label: 'Forwards', icon: 'forwards' },
   { path: '/ngrok', label: 'Ngrok', icon: 'ngrok' },
+  { path: '/database', label: 'Database', icon: 'database' },
   { path: '/settings', label: 'Settings', icon: 'settings' },
 ]
 
@@ -92,6 +93,12 @@ const themes = [
           <svg v-else-if="item.icon === 'ngrok'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
             <path d="M4 16l6-12 6 12" />
             <path d="M6.5 11h7" />
+          </svg>
+          <!-- Database -->
+          <svg v-else-if="item.icon === 'database'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+            <ellipse cx="10" cy="5" rx="7" ry="3" />
+            <path d="M3 5v10c0 1.66 3.13 3 7 3s7-1.34 7-3V5" />
+            <path d="M3 10c0 1.66 3.13 3 7 3s7-1.34 7-3" />
           </svg>
           <!-- Settings -->
           <svg v-else-if="item.icon === 'settings'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
