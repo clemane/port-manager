@@ -123,10 +123,8 @@ async function toggleSchema(schema: string) {
 function onTableClick(schema: string, table: string) {
   selectedTable.value = { schema, table }
   loadColumns(schema, table)
-}
-
-function onTableDblClick(schema: string, table: string) {
   sqlText.value = `SELECT * FROM ${schema}.${table} LIMIT 100`
+  runQuery()
 }
 
 // Reset schema tree when connection changes
@@ -279,7 +277,6 @@ const statsText = computed(() => {
                     class="schema-tree__item schema-tree__item--table"
                     :class="{ 'schema-tree__item--selected': selectedTable?.schema === schema && selectedTable?.table === t.table_name }"
                     @click="onTableClick(schema, t.table_name)"
-                    @dblclick="onTableDblClick(schema, t.table_name)"
                   >
                     <span class="schema-tree__spacer" />
                     <svg class="schema-tree__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
