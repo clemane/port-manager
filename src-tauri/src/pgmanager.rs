@@ -317,3 +317,230 @@ pub async fn pg_disconnect(
     }
     Ok(())
 }
+
+// ── Schema Browser Models ──────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct PgTableInfo {
+    pub schema_name: String,
+    pub table_name: String,
+    pub table_type: String,
+    pub estimated_rows: Option<i64>,
+    pub total_size: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PgColumnInfo {
+    pub column_name: String,
+    pub data_type: String,
+    pub is_nullable: bool,
+    pub column_default: Option<String>,
+    pub is_primary_key: bool,
+    pub ordinal_position: i32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PgIndexInfo {
+    pub index_name: String,
+    pub index_def: String,
+    pub is_unique: bool,
+    pub is_primary: bool,
+}
+
+// ── Schema Browser Commands ────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pg_list_schemas(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, String> {
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    let rows = client
+        .query(
+            "SELECT schema_name FROM information_schema.schemata \
+             WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'pg_toast') \
+             ORDER BY schema_name",
+            &[],
+        )
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    let schemas: Vec<String> = rows.iter().map(|r| r.get::<_, String>(0)).collect();
+    Ok(schemas)
+}
+
+#[tauri::command]
+pub async fn pg_list_tables(
+    id: String,
+    schema: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<PgTableInfo>, String> {
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    let rows = client
+        .query(
+            "SELECT \
+                t.table_schema as schema_name, \
+                t.table_name, \
+                t.table_type, \
+                s.n_live_tup as estimated_rows, \
+                pg_size_pretty(pg_total_relation_size(quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))) as total_size \
+             FROM information_schema.tables t \
+             LEFT JOIN pg_stat_user_tables s \
+                ON s.schemaname = t.table_schema AND s.relname = t.table_name \
+             WHERE t.table_schema = $1 \
+             ORDER BY t.table_name",
+            &[&schema],
+        )
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    let tables: Vec<PgTableInfo> = rows
+        .iter()
+        .map(|r| PgTableInfo {
+            schema_name: r.get::<_, String>(0),
+            table_name: r.get::<_, String>(1),
+            table_type: r.get::<_, String>(2),
+            estimated_rows: r.get::<_, Option<i64>>(3),
+            total_size: r.get::<_, Option<String>>(4),
+        })
+        .collect();
+
+    Ok(tables)
+}
+
+#[tauri::command]
+pub async fn pg_list_columns(
+    id: String,
+    schema: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<PgColumnInfo>, String> {
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    let rows = client
+        .query(
+            "SELECT \
+                c.column_name, \
+                c.data_type, \
+                c.is_nullable = 'YES' as is_nullable, \
+                c.column_default, \
+                COALESCE( \
+                    EXISTS( \
+                        SELECT 1 FROM pg_constraint pc \
+                        JOIN pg_class cl ON cl.oid = pc.conrelid \
+                        JOIN pg_namespace ns ON ns.oid = cl.relnamespace \
+                        JOIN pg_attribute a ON a.attrelid = cl.oid AND a.attname = c.column_name \
+                        WHERE pc.contype = 'p' \
+                        AND ns.nspname = c.table_schema \
+                        AND cl.relname = c.table_name \
+                        AND a.attnum = ANY(pc.conkey) \
+                    ), false \
+                ) as is_primary_key, \
+                c.ordinal_position \
+             FROM information_schema.columns c \
+             WHERE c.table_schema = $1 AND c.table_name = $2 \
+             ORDER BY c.ordinal_position",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    let columns: Vec<PgColumnInfo> = rows
+        .iter()
+        .map(|r| PgColumnInfo {
+            column_name: r.get::<_, String>(0),
+            data_type: r.get::<_, String>(1),
+            is_nullable: r.get::<_, bool>(2),
+            column_default: r.get::<_, Option<String>>(3),
+            is_primary_key: r.get::<_, bool>(4),
+            ordinal_position: r.get::<_, i32>(5),
+        })
+        .collect();
+
+    Ok(columns)
+}
+
+#[tauri::command]
+pub async fn pg_list_indexes(
+    id: String,
+    schema: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<PgIndexInfo>, String> {
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    let rows = client
+        .query(
+            "SELECT \
+                indexname as index_name, \
+                indexdef as index_def, \
+                indexdef LIKE '%UNIQUE%' as is_unique, \
+                indexname LIKE '%_pkey' as is_primary \
+             FROM pg_indexes \
+             WHERE schemaname = $1 AND tablename = $2 \
+             ORDER BY indexname",
+            &[&schema, &table],
+        )
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    let indexes: Vec<PgIndexInfo> = rows
+        .iter()
+        .map(|r| PgIndexInfo {
+            index_name: r.get::<_, String>(0),
+            index_def: r.get::<_, String>(1),
+            is_unique: r.get::<_, bool>(2),
+            is_primary: r.get::<_, bool>(3),
+        })
+        .collect();
+
+    Ok(indexes)
+}
+
+#[tauri::command]
+pub async fn pg_table_row_count(
+    id: String,
+    schema: String,
+    table: String,
+    state: State<'_, AppState>,
+) -> Result<i64, String> {
+    // Validate schema and table names to prevent SQL injection
+    // Only allow alphanumeric characters and underscores
+    let is_valid_identifier = |s: &str| -> bool {
+        !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '_')
+    };
+
+    if !is_valid_identifier(&schema) {
+        return Err("Invalid schema name".to_string());
+    }
+    if !is_valid_identifier(&table) {
+        return Err("Invalid table name".to_string());
+    }
+
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    let query = format!(
+        "SELECT count(*) FROM \"{}\".\"{}\"",
+        schema, table
+    );
+
+    let row = client
+        .query_one(&query, &[])
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    let count: i64 = row.get::<_, i64>(0);
+    Ok(count)
+}

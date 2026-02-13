@@ -118,6 +118,11 @@ pub fn run() {
             pgmanager::pg_test_connection,
             pgmanager::pg_connect,
             pgmanager::pg_disconnect,
+            pgmanager::pg_list_schemas,
+            pgmanager::pg_list_tables,
+            pgmanager::pg_list_columns,
+            pgmanager::pg_list_indexes,
+            pgmanager::pg_table_row_count,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
