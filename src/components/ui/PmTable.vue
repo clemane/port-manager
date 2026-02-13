@@ -1,12 +1,15 @@
 <script setup lang="ts" generic="T extends Record<string, any>">
 import { ref, computed, watch } from 'vue'
+import PmSkeletonLoader from './PmSkeletonLoader.vue'
 
 const props = withDefaults(defineProps<{
   data: T[]
   columns: { key: string; label: string; sortable?: boolean; width?: string }[]
   pageSize?: number
+  loading?: boolean
 }>(), {
   pageSize: 50,
+  loading: false,
 })
 
 const sortKey = ref('')
@@ -71,8 +74,20 @@ function goToPage(page: number) {
           </th>
         </tr>
       </thead>
-      <tbody>
-        <tr v-for="(row, i) in pagedData" :key="i">
+      <tbody v-if="loading">
+        <tr>
+          <td :colspan="columns.length">
+            <PmSkeletonLoader variant="table" :lines="5" />
+          </td>
+        </tr>
+      </tbody>
+      <tbody v-else>
+        <tr
+          v-for="(row, i) in pagedData"
+          :key="i"
+          class="pm-table__row-animate"
+          :style="{ animationDelay: i < 15 ? `${i * 20}ms` : '0ms' }"
+        >
           <td v-for="col in columns" :key="col.key">
             <slot :name="`cell-${col.key}`" :row="row" :value="row[col.key]">
               {{ row[col.key] }}
@@ -110,29 +125,48 @@ function goToPage(page: number) {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
+  font-family: var(--pm-font-body);
 }
 .pm-table th {
   text-align: left;
-  padding: 8px 12px;
-  background: var(--pm-surface);
+  padding: 10px 12px;
+  background: var(--pm-surface-elevated);
   color: var(--pm-text-secondary);
-  font-weight: 500;
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
   border-bottom: 1px solid var(--pm-border);
   white-space: nowrap;
   user-select: none;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .pm-table__sortable { cursor: pointer; }
 .pm-table__sortable:hover { color: var(--pm-text-primary); }
 .pm-table td {
-  padding: 8px 12px;
+  padding: 10px 12px;
   color: var(--pm-text-primary);
   border-bottom: 1px solid var(--pm-border-subtle);
+  height: 44px;
 }
-.pm-table tbody tr:hover { background: var(--pm-surface-hover); }
+.pm-table tbody tr {
+  transition: background 0.15s, transform 0.15s;
+}
+.pm-table tbody tr:hover {
+  background: var(--pm-surface-hover);
+  transform: translateX(2px);
+}
+.pm-table__row-animate {
+  animation: pm-slide-up 0.3s ease forwards;
+  opacity: 0;
+}
 .pm-table__empty {
   text-align: center;
   color: var(--pm-text-muted);
-  padding: 24px;
+  padding: 32px;
+  font-size: 14px;
 }
 .pm-table__pagination {
   display: flex;
@@ -149,17 +183,18 @@ function goToPage(page: number) {
 .pm-table__page-btns {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
 }
 .pm-table__page-btns button {
   background: transparent;
   border: 1px solid var(--pm-border);
   border-radius: var(--pm-radius-sm);
   color: var(--pm-text-secondary);
-  padding: 2px 8px;
-  font-size: 13px;
+  padding: 4px 8px;
+  font-size: 12px;
   cursor: pointer;
-  font-family: inherit;
+  font-family: var(--pm-font-body);
+  transition: all 0.15s;
 }
 .pm-table__page-btns button:hover:not(:disabled) {
   background: var(--pm-surface-hover);
