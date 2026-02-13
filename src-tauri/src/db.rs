@@ -26,6 +26,7 @@ pub async fn init_db(app_dir: PathBuf) -> Result<SqlitePool> {
     let migrations = [
         include_str!("../migrations/001_init.sql"),
         include_str!("../migrations/002_ngrok.sql"),
+        include_str!("../migrations/003_pg_connections.sql"),
     ];
 
     for migration_sql in migrations {
