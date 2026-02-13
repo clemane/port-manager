@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { PmButton, PmBadge, PmTable, PmModal, PmInput, PmMetricCard, PmStatusDot, PmConnectionModal, PmCredentialPicker } from '@/components/ui'
+import { PmButton, PmTable, PmModal, PmInput, PmMetricCard, PmStatusDot, PmConnectionModal, PmCredentialPicker } from '@/components/ui'
 import type { ConnectionFormData, ConnectionInitialValues } from '@/components/ui'
 import type { DetectedCredentials } from '@/types/k8s'
 import { useForwards } from '@/composables/useForwards'
@@ -95,8 +95,8 @@ function applyCredential(cred: DetectedCredentials) {
   showCredentialPicker.value = false
   const forward = dbTargetForward.value
   connectionInitialValues.value = {
-    host: cred.host ?? '127.0.0.1',
-    port: cred.port ?? forward?.local_port ?? 5432,
+    host: '127.0.0.1',
+    port: forward?.local_port ?? 5432,
     databaseName: cred.database ?? undefined,
     username: cred.username ?? undefined,
     password: cred.password ?? undefined,
