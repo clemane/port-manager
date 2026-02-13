@@ -40,4 +40,13 @@
 
   --pm-gradient-ambiance: radial-gradient(ellipse at 50% 0%, rgba(9, 105, 218, 0.04) 0%, transparent 70%);
   --pm-status-pulse-color: #1a7f37;
+
+  /* DB Editor tokens */
+  --pm-db-keyword: #0550ae;
+  --pm-db-string: #116329;
+  --pm-db-number: #953800;
+  --pm-db-comment: #6e7781;
+  --pm-db-table: #0969da;
+  --pm-db-column: #24292f;
+  --pm-db-function: #8250df;
 }
