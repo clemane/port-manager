@@ -123,7 +123,7 @@ async function toggleSchema(schema: string) {
 function onTableClick(schema: string, table: string) {
   selectedTable.value = { schema, table }
   loadColumns(schema, table)
-  sqlText.value = `SELECT * FROM ${schema}.${table} LIMIT 100`
+  sqlText.value = `SELECT * FROM ${schema}.${table}`
   runQuery()
 }
 
