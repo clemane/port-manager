@@ -69,3 +69,60 @@ export interface PgSavedQuery {
   sql_text: string
   created_at: string
 }
+
+export interface QueryTab {
+  id: string
+  label: string
+  sql: string
+  cursorPos: number
+  result: PgQueryResult | null
+  error: string | null
+  loading: boolean
+}
+
+export interface PgViewInfo {
+  schema_name: string
+  view_name: string
+  definition: string | null
+}
+
+export interface PgFunctionInfo {
+  schema_name: string
+  function_name: string
+  result_type: string
+  argument_types: string
+  function_type: string
+}
+
+export interface ExplainNode {
+  id: string
+  type: string
+  relation?: string
+  alias?: string
+  startupCost: number
+  totalCost: number
+  planRows: number
+  actualTime: number | null
+  actualRows: number | null
+  loops: number
+  filter?: string
+  indexName?: string
+  sharedHitBlocks?: number
+  sharedReadBlocks?: number
+  children: ExplainNode[]
+  percentOfTotal: number
+}
+
+export type ContextMenuAction =
+  | { type: 'select-star'; schema: string; table: string }
+  | { type: 'select-count'; schema: string; table: string }
+  | { type: 'drop-table'; schema: string; table: string }
+  | { type: 'drop-view'; schema: string; view: string }
+  | { type: 'drop-index'; schema: string; index: string }
+  | { type: 'drop-function'; schema: string; func: string }
+  | { type: 'export-csv'; schema: string; table: string }
+  | { type: 'export-json'; schema: string; table: string }
+  | { type: 'create-table'; schema: string }
+  | { type: 'add-column'; schema: string; table: string }
+  | { type: 'rename-table'; schema: string; table: string }
+  | { type: 'refresh' }
