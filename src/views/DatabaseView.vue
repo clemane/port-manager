@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import {
   PmButton, PmBadge, PmSelect, PmTable, PmSplitPane,
   PmCodeEditor, PmConnectionModal,
@@ -183,10 +183,10 @@ const tableColumns = computed(() =>
 
 const tableData = computed(() => {
   if (!queryResult.value) return []
-  return queryResult.value.rows.map(row => {
-    const obj: Record<string, unknown> = {}
-    queryResult.value!.columns.forEach((col, i) => {
-      obj[col.name] = row[i]
+  return queryResult.value.rows.map((row, i) => {
+    const obj: Record<string, unknown> = { __rowIndex: i }
+    queryResult.value!.columns.forEach((col, j) => {
+      obj[col.name] = row[j]
     })
     return obj
   })
@@ -199,6 +199,108 @@ const statsText = computed(() => {
     return `${r.rows.length} rows${r.total_rows != null ? ` of ${r.total_rows}` : ''} in ${r.duration_ms}ms`
   }
   return `${r.affected_rows ?? 0} affected in ${r.duration_ms}ms`
+})
+
+// ── Inline editing ───────────────────────────────────────────────────
+const editingCell = ref<{ rowIdx: number; col: string } | null>(null)
+const editValue = ref('')
+const pendingEdits = ref<Map<number, Map<string, string>>>(new Map())
+
+const hasEdits = computed(() => pendingEdits.value.size > 0)
+const editCount = computed(() => {
+  let count = 0
+  for (const cols of pendingEdits.value.values()) count += cols.size
+  return count
+})
+
+const primaryKeys = computed(() =>
+  columns.value.filter(c => c.is_primary_key).map(c => c.column_name)
+)
+
+function startEdit(rowIdx: number, col: string, currentValue: unknown) {
+  editingCell.value = { rowIdx, col }
+  const pending = pendingEdits.value.get(rowIdx)?.get(col)
+  editValue.value = pending ?? String(currentValue ?? '')
+  nextTick(() => {
+    const input = document.querySelector('.cell-edit-input') as HTMLInputElement | null
+    input?.focus()
+  })
+}
+
+function commitEdit() {
+  if (!editingCell.value) return
+  const { rowIdx, col } = editingCell.value
+  const originalValue = String(tableData.value[rowIdx]?.[col] ?? '')
+
+  if (editValue.value !== originalValue) {
+    if (!pendingEdits.value.has(rowIdx)) {
+      pendingEdits.value.set(rowIdx, new Map())
+    }
+    pendingEdits.value.get(rowIdx)!.set(col, editValue.value)
+  }
+  editingCell.value = null
+}
+
+function cancelEdit() {
+  editingCell.value = null
+}
+
+function discardEdits() {
+  pendingEdits.value = new Map()
+}
+
+function getCellValue(rowIdx: number, col: string, original: unknown): string {
+  return pendingEdits.value.get(rowIdx)?.get(col) ?? String(original ?? '')
+}
+
+function isCellModified(rowIdx: number, col: string): boolean {
+  return pendingEdits.value.get(rowIdx)?.has(col) ?? false
+}
+
+async function saveEdits() {
+  if (!selectedTable.value || primaryKeys.value.length === 0) {
+    queryError.value = 'Cannot save: no primary key detected for this table'
+    return
+  }
+  queryLoading.value = true
+  queryError.value = null
+
+  try {
+    for (const [rowIdx, colEdits] of pendingEdits.value) {
+      const row = tableData.value[rowIdx]
+      if (!row) continue
+
+      const setClauses: string[] = []
+      for (const [col, val] of colEdits) {
+        setClauses.push(`"${col}" = '${val.replace(/'/g, "''")}'`)
+      }
+
+      const whereClauses = primaryKeys.value.map(pk => {
+        const pkVal = row[pk]
+        if (pkVal === null || pkVal === undefined) return `"${pk}" IS NULL`
+        return `"${pk}" = '${String(pkVal).replace(/'/g, "''")}'`
+      })
+
+      const sql = `UPDATE "${selectedTable.value!.schema}"."${selectedTable.value!.table}" SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')}`
+      await executeQuery(sql)
+
+      if (queryError.value) break
+    }
+
+    if (!queryError.value) {
+      pendingEdits.value = new Map()
+      sqlText.value = `SELECT * FROM "${selectedTable.value.schema}"."${selectedTable.value.table}"`
+      await runQuery()
+    }
+  } finally {
+    queryLoading.value = false
+  }
+}
+
+// Reset edits when table changes
+watch(selectedTable, () => {
+  pendingEdits.value = new Map()
+  editingCell.value = null
 })
 </script>
 
@@ -411,6 +513,13 @@ const statsText = computed(() => {
                 <span v-else class="results-panel__info">{{ statsText }}</span>
               </div>
 
+              <!-- Edit toolbar -->
+              <div v-if="hasEdits" class="edit-toolbar">
+                <span class="edit-toolbar__count">{{ editCount }} modification(s)</span>
+                <PmButton size="sm" variant="ghost" @click="discardEdits">Discard</PmButton>
+                <PmButton size="sm" @click="saveEdits" :loading="queryLoading">Save</PmButton>
+              </div>
+
               <!-- Results table -->
               <div class="results-panel__table">
                 <PmTable
@@ -418,7 +527,27 @@ const statsText = computed(() => {
                   :columns="tableColumns"
                   :loading="queryLoading"
                   :page-size="100"
-                />
+                >
+                  <template v-for="col in tableColumns" :key="col.key" #[`cell-${col.key}`]="{ row, value }">
+                    <input
+                      v-if="editingCell?.rowIdx === row.__rowIndex && editingCell?.col === col.key"
+                      :value="editValue"
+                      @input="editValue = ($event.target as HTMLInputElement).value"
+                      @blur="commitEdit"
+                      @keydown.enter="commitEdit"
+                      @keydown.escape="cancelEdit"
+                      class="cell-edit-input"
+                    />
+                    <span
+                      v-else
+                      class="cell-display"
+                      :class="{ 'cell-display--modified': isCellModified(row.__rowIndex, col.key) }"
+                      @dblclick="startEdit(row.__rowIndex, col.key, value)"
+                    >
+                      {{ getCellValue(row.__rowIndex, col.key, value) }}
+                    </span>
+                  </template>
+                </PmTable>
               </div>
             </div>
           </template>
@@ -801,6 +930,45 @@ const statsText = computed(() => {
 .results-panel__table :deep(.pm-table-wrapper) {
   border: none;
   border-radius: 0;
+}
+
+/* ── Edit toolbar ────────────────────────────────────────────────── */
+.edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--pm-accent-dim, rgba(99, 102, 241, 0.1));
+  border-bottom: 1px solid var(--pm-accent);
+  flex-shrink: 0;
+}
+.edit-toolbar__count {
+  font-size: 12px;
+  font-family: var(--pm-font-mono);
+  color: var(--pm-accent);
+  margin-right: auto;
+}
+
+/* ── Inline cell editing ─────────────────────────────────────────── */
+.cell-edit-input {
+  width: 100%;
+  padding: 2px 4px;
+  background: var(--pm-surface);
+  border: 1px solid var(--pm-accent);
+  border-radius: 2px;
+  color: var(--pm-text-primary);
+  font-family: var(--pm-font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.cell-display {
+  cursor: default;
+  display: block;
+  min-height: 1em;
+}
+.cell-display--modified {
+  color: var(--pm-accent);
+  font-weight: 600;
 }
 
 /* ── Save dialog ─────────────────────────────────────────────────── */

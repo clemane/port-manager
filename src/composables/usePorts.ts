@@ -17,7 +17,7 @@ export function usePorts() {
   let interval: ReturnType<typeof setInterval> | null = null
 
   async function refresh() {
-    loading.value = true
+    if (ports.value.length === 0) loading.value = true
     error.value = null
     try {
       ports.value = await invoke<SystemPort[]>('get_system_ports')

@@ -162,8 +162,7 @@ function goToPage(page: number) {
   transform: translateX(2px);
 }
 .pm-table__row-animate {
-  animation: pm-slide-up 0.3s ease forwards;
-  opacity: 0;
+  animation: pm-slide-up 0.3s ease both;
 }
 .pm-table__empty {
   text-align: center;

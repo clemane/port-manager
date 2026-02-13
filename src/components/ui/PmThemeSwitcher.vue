@@ -19,7 +19,7 @@ const themeColors: Record<string, string> = {
 function nextTheme() {
   const idx = props.themes.findIndex(t => t.value === props.current)
   const next = props.themes[(idx + 1) % props.themes.length]
-  return next.value
+  return next!.value
 }
 </script>
 
