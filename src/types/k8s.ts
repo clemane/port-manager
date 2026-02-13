@@ -30,3 +30,14 @@ export interface PodPort {
   container_port: number
   protocol: string
 }
+
+export interface DetectedCredentials {
+  source: string
+  host: string | null
+  port: number | null
+  database: string | null
+  username: string | null
+  password: string | null
+  ssl_mode: string | null
+  confidence: number
+}
