@@ -40,4 +40,17 @@
   /* Base */
   --white: #ffffff;
   --black: #000000;
+
+  /* Mission Control palette */
+  --mc-bg: #06080f;
+  --mc-surface: #0d1117;
+  --mc-surface-elevated: #161b22;
+  --mc-border: #21262d;
+  --mc-accent: #58a6ff;
+  --mc-success: #3fb950;
+  --mc-danger: #f85149;
+  --mc-warning: #d29922;
+  --mc-text-1: #e6edf3;
+  --mc-text-2: #8b949e;
+  --mc-text-3: #484f58;
 }

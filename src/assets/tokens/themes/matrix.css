@@ -3,6 +3,7 @@
   --pm-surface: #020a02;
   --pm-surface-hover: #041a04;
   --pm-surface-active: #062a06;
+  --pm-surface-elevated: #031003;
   --pm-border: #0a3a0a;
   --pm-border-subtle: #061a06;
 
@@ -13,6 +14,7 @@
   --pm-accent: #00ff41;
   --pm-accent-hover: #33ff66;
   --pm-accent-text: #000000;
+  --pm-accent-glow: rgba(0, 255, 65, 0.2);
 
   --pm-success: #00ff41;
   --pm-danger: #ff0040;
@@ -39,4 +41,7 @@
   --pm-radius-lg: 4px;
 
   --pm-glow-matrix: 0 0 8px rgba(0, 255, 65, 0.3);
+
+  --pm-gradient-ambiance: radial-gradient(ellipse at 50% 0%, rgba(0, 255, 65, 0.02) 0%, transparent 70%);
+  --pm-status-pulse-color: #00ff41;
 }

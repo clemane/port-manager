@@ -1,38 +1,43 @@
 [data-theme="dark"] {
-  --pm-bg: var(--gray-950);
-  --pm-surface: var(--gray-900);
-  --pm-surface-hover: var(--gray-800);
-  --pm-surface-active: var(--gray-700);
-  --pm-border: var(--gray-700);
-  --pm-border-subtle: var(--gray-800);
+  --pm-bg: var(--mc-bg);
+  --pm-surface: var(--mc-surface);
+  --pm-surface-hover: #1c2128;
+  --pm-surface-active: #262c36;
+  --pm-surface-elevated: var(--mc-surface-elevated);
+  --pm-border: var(--mc-border);
+  --pm-border-subtle: #161b22;
 
-  --pm-text-primary: var(--gray-50);
-  --pm-text-secondary: var(--gray-400);
-  --pm-text-muted: var(--gray-500);
+  --pm-text-primary: var(--mc-text-1);
+  --pm-text-secondary: var(--mc-text-2);
+  --pm-text-muted: var(--mc-text-3);
 
-  --pm-accent: var(--blue-500);
-  --pm-accent-hover: var(--blue-400);
+  --pm-accent: var(--mc-accent);
+  --pm-accent-hover: #79c0ff;
   --pm-accent-text: var(--white);
+  --pm-accent-glow: rgba(88, 166, 255, 0.15);
 
-  --pm-success: var(--green-500);
-  --pm-danger: var(--red-500);
-  --pm-warning: var(--yellow-500);
-  --pm-info: var(--cyan-500);
+  --pm-success: var(--mc-success);
+  --pm-danger: var(--mc-danger);
+  --pm-warning: var(--mc-warning);
+  --pm-info: #58a6ff;
 
-  --pm-sidebar-bg: var(--gray-900);
-  --pm-sidebar-active: var(--gray-800);
-  --pm-sidebar-text: var(--gray-400);
+  --pm-sidebar-bg: #010409;
+  --pm-sidebar-active: var(--mc-surface);
+  --pm-sidebar-text: var(--mc-text-2);
   --pm-sidebar-text-active: var(--white);
 
-  --pm-badge-running-bg: rgba(34, 197, 94, 0.15);
-  --pm-badge-running-text: var(--green-400);
-  --pm-badge-error-bg: rgba(239, 68, 68, 0.15);
-  --pm-badge-error-text: var(--red-400);
-  --pm-badge-stopped-bg: rgba(107, 114, 128, 0.15);
-  --pm-badge-stopped-text: var(--gray-400);
+  --pm-badge-running-bg: rgba(63, 185, 80, 0.15);
+  --pm-badge-running-text: var(--mc-success);
+  --pm-badge-error-bg: rgba(248, 81, 73, 0.15);
+  --pm-badge-error-text: var(--mc-danger);
+  --pm-badge-stopped-bg: rgba(139, 148, 158, 0.12);
+  --pm-badge-stopped-text: var(--mc-text-2);
 
-  --pm-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --pm-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
   --pm-radius: 8px;
-  --pm-radius-sm: 4px;
+  --pm-radius-sm: 6px;
   --pm-radius-lg: 12px;
+
+  --pm-gradient-ambiance: radial-gradient(ellipse at 50% 0%, rgba(88, 166, 255, 0.03) 0%, transparent 70%);
+  --pm-status-pulse-color: var(--mc-success);
 }
