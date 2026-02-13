@@ -7,6 +7,7 @@ const { ports, loading } = usePorts()
 
 const searchQuery = ref('')
 const stateFilter = ref('')
+const protocolFilter = ref('')
 
 const stateOptions = [
   { value: '', label: 'All States' },
@@ -14,6 +15,14 @@ const stateOptions = [
   { value: 'ESTABLISHED', label: 'ESTABLISHED' },
   { value: 'TIME_WAIT', label: 'TIME_WAIT' },
   { value: 'CLOSE_WAIT', label: 'CLOSE_WAIT' },
+]
+
+const protocolOptions = [
+  { value: '', label: 'All Protocols' },
+  { value: 'tcp', label: 'TCP' },
+  { value: 'udp', label: 'UDP' },
+  { value: 'tcp6', label: 'TCP6' },
+  { value: 'udp6', label: 'UDP6' },
 ]
 
 const columns = [
@@ -31,7 +40,8 @@ const filteredPorts = computed(() => {
       String(p.local_port).includes(searchQuery.value) ||
       (p.process_name?.toLowerCase().includes(searchQuery.value.toLowerCase()) ?? false)
     const matchesState = !stateFilter.value || p.state === stateFilter.value
-    return matchesSearch && matchesState
+    const matchesProtocol = !protocolFilter.value || p.protocol === protocolFilter.value
+    return matchesSearch && matchesState && matchesProtocol
   })
 })
 
@@ -55,6 +65,10 @@ const conflictCount = computed(() => conflictPorts.value.size)
 
 function isConflict(port: number): boolean {
   return conflictPorts.value.has(port)
+}
+
+function rowClass(row: Record<string, any>): string | undefined {
+  return isConflict(row.local_port) ? 'pm-table__row--conflict' : undefined
 }
 
 function stateBadgeVariant(state: string): 'running' | 'error' | 'stopped' | 'info' {
@@ -89,9 +103,14 @@ function stateBadgeVariant(state: string): 'running' | 'error' | 'stopped' | 'in
         :options="stateOptions"
         placeholder="Filter by state"
       />
+      <PmSelect
+        v-model="protocolFilter"
+        :options="protocolOptions"
+        placeholder="Filter by protocol"
+      />
     </div>
 
-    <PmTable :data="filteredPorts" :columns="columns" :loading="loading">
+    <PmTable :data="filteredPorts" :columns="columns" :loading="loading" :row-class="rowClass">
       <template #cell-local_port="{ row }">
         <span class="port-value" :class="{ 'port-value--conflict': isConflict(row.local_port) }">
           {{ row.local_port }}
@@ -158,5 +177,9 @@ function stateBadgeVariant(state: string): 'running' | 'error' | 'stopped' | 'in
   font-family: var(--pm-font-mono);
   color: var(--pm-text-secondary);
   font-size: 12px;
+}
+
+:deep(.pm-table__row--conflict) {
+  background: color-mix(in srgb, var(--pm-danger) 5%, transparent);
 }
 </style>

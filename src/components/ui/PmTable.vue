@@ -7,9 +7,11 @@ const props = withDefaults(defineProps<{
   columns: { key: string; label: string; sortable?: boolean; width?: string }[]
   pageSize?: number
   loading?: boolean
+  rowClass?: (row: T, index: number) => string | Record<string, boolean> | undefined
 }>(), {
   pageSize: 50,
   loading: false,
+  rowClass: undefined,
 })
 
 const sortKey = ref('')
@@ -86,6 +88,7 @@ function goToPage(page: number) {
           v-for="(row, i) in pagedData"
           :key="i"
           class="pm-table__row-animate"
+          :class="rowClass ? rowClass(row, i) : undefined"
           :style="{ animationDelay: i < 15 ? `${i * 20}ms` : '0ms' }"
         >
           <td v-for="col in columns" :key="col.key">

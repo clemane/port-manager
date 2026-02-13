@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 
 const props = defineProps<{
   modelValue?: string
@@ -31,14 +31,33 @@ function select(value: string) {
   isOpen.value = false
   search.value = ''
 }
+
+const selectRef = ref<HTMLElement | null>(null)
+
+function onClickOutside(e: MouseEvent) {
+  if (selectRef.value && !selectRef.value.contains(e.target as Node)) {
+    isOpen.value = false
+    search.value = ''
+  }
+}
+
+watch(isOpen, (open) => {
+  if (open) document.addEventListener('click', onClickOutside, true)
+  else document.removeEventListener('click', onClickOutside, true)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', onClickOutside, true)
+})
 </script>
 
 <template>
-  <div class="pm-select" :class="{ 'pm-select--open': isOpen }">
+  <div ref="selectRef" class="pm-select" :class="{ 'pm-select--open': isOpen }">
     <button class="pm-select__trigger" @click="isOpen = !isOpen">
       <span :class="{ 'pm-select__placeholder': !modelValue }">{{ selectedLabel }}</span>
       <span class="pm-select__arrow">&#9662;</span>
     </button>
+    <Transition name="dropdown">
     <div v-if="isOpen" class="pm-select__dropdown">
       <input
         v-if="searchable"
@@ -60,6 +79,7 @@ function select(value: string) {
         <div v-if="filtered.length === 0" class="pm-select__empty">No results</div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>
 
@@ -128,4 +148,21 @@ function select(value: string) {
 .pm-select__option:hover { background: var(--pm-surface-hover); }
 .pm-select__option--selected { color: var(--pm-accent); }
 .pm-select__empty { padding: 8px 12px; color: var(--pm-text-muted); font-size: 13px; }
+
+.pm-select__trigger:focus-visible {
+  outline: none;
+  border-color: var(--pm-accent);
+  box-shadow: 0 0 0 2px var(--pm-accent-glow);
+}
+
+.dropdown-enter-active,
+.dropdown-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  transform-origin: top;
+}
+.dropdown-enter-from,
+.dropdown-leave-to {
+  opacity: 0;
+  transform: scaleY(0.95);
+}
 </style>
