@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { PmButton, PmBadge, PmTable, PmModal, PmInput, PmMetricCard, PmStatusDot } from '@/components/ui'
+import { PmButton, PmBadge, PmTable, PmModal, PmInput, PmMetricCard, PmStatusDot, PmConnectionModal, PmCredentialPicker } from '@/components/ui'
+import type { ConnectionFormData, ConnectionInitialValues } from '@/components/ui'
+import type { DetectedCredentials } from '@/types/k8s'
 import { useForwards } from '@/composables/useForwards'
 import type { ActiveForward } from '@/composables/useForwards'
+import { useDbDetection } from '@/composables/useDbDetection'
+import { usePgManager } from '@/composables/usePgManager'
+import { useRouter } from 'vue-router'
 
 const { forwards, favorites, killForward, restartForward, launchFavorite, deleteFavorite, saveFavorite } = useForwards()
+
+const router = useRouter()
+const { detecting, detectedCreds, detectError, detectCredentials, reset: resetDetection } = useDbDetection()
+const { saveConnection } = usePgManager()
 
 const showSaveModal = ref(false)
 const saveTarget = ref<ActiveForward | null>(null)
@@ -12,13 +21,18 @@ const favoriteLabel = ref('')
 const favoriteGroup = ref('')
 const copiedId = ref<string | null>(null)
 
+const showCredentialPicker = ref(false)
+const showConnectionModal = ref(false)
+const connectionInitialValues = ref<ConnectionInitialValues | null>(null)
+const dbTargetForward = ref<ActiveForward | null>(null)
+
 const columns = [
   { key: 'resource_name', label: 'Resource', sortable: true },
   { key: 'namespace', label: 'Namespace', sortable: true },
   { key: 'local_port', label: 'Local Port', sortable: true, width: '100px' },
   { key: 'remote_port', label: 'Remote Port', sortable: true, width: '100px' },
   { key: 'status', label: 'Status', sortable: true, width: '110px' },
-  { key: 'actions', label: 'Actions', width: '160px' },
+  { key: 'actions', label: 'Actions', width: '200px' },
 ]
 
 const activeCount = computed(() => forwards.value.filter(f => f.status === 'running').length)
@@ -58,6 +72,62 @@ function groupedFavorites() {
     groups.get(group)!.push(fav)
   }
   return groups
+}
+
+async function openDbManager(forward: ActiveForward) {
+  dbTargetForward.value = forward
+  connectionInitialValues.value = {
+    host: '127.0.0.1',
+    port: forward.local_port,
+    forwardId: forward.id,
+  }
+  await detectCredentials(forward.kubeconfig_id, forward.namespace)
+  if (detectedCreds.value.length > 1) {
+    showCredentialPicker.value = true
+  } else if (detectedCreds.value.length === 1) {
+    applyCredential(detectedCreds.value[0])
+  } else {
+    showConnectionModal.value = true
+  }
+}
+
+function applyCredential(cred: DetectedCredentials) {
+  showCredentialPicker.value = false
+  const forward = dbTargetForward.value
+  connectionInitialValues.value = {
+    host: cred.host ?? '127.0.0.1',
+    port: cred.port ?? forward?.local_port ?? 5432,
+    databaseName: cred.database ?? undefined,
+    username: cred.username ?? undefined,
+    password: cred.password ?? undefined,
+    sslMode: cred.ssl_mode ?? undefined,
+    label: cred.source,
+    forwardId: forward?.id ?? undefined,
+  }
+  showConnectionModal.value = true
+}
+
+function onCredentialPickerManual() {
+  showCredentialPicker.value = false
+  showConnectionModal.value = true
+}
+
+async function onConnectionSave(data: ConnectionFormData) {
+  await saveConnection({
+    label: data.label || undefined,
+    forwardId: data.forwardId || undefined,
+    favoriteId: data.favoriteId || undefined,
+    host: data.host,
+    port: data.port,
+    databaseName: data.databaseName,
+    username: data.username,
+    password: data.password || undefined,
+    sslMode: data.sslMode,
+    color: data.color || undefined,
+  })
+  showConnectionModal.value = false
+  resetDetection()
+  router.push('/database')
 }
 </script>
 
@@ -116,6 +186,13 @@ function groupedFavorites() {
           <div class="action-btns">
             <PmButton v-if="row.status === 'running'" size="sm" variant="danger" @click="killForward(row.id)">Kill</PmButton>
             <PmButton v-else size="sm" variant="ghost" @click="restartForward(row.id)">Restart</PmButton>
+            <PmButton v-if="row.status === 'running'" size="sm" variant="ghost" @click="openDbManager(row)" title="Open Database Manager">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14">
+                <ellipse cx="8" cy="4" rx="6" ry="2.5"/>
+                <path d="M2 4v8c0 1.38 2.69 2.5 6 2.5s6-1.12 6-2.5V4"/>
+                <path d="M2 8c0 1.38 2.69 2.5 6 2.5s6-1.12 6-2.5"/>
+              </svg>
+            </PmButton>
             <PmButton size="sm" variant="icon" @click="copyUrl(row.id, row.local_port)" :title="copiedId === row.id ? 'Copied!' : 'Copy URL'">
               <svg v-if="copiedId !== row.id" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11V3h8" stroke-linecap="round"/></svg>
               <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><path d="M4 8l3 3 5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -145,6 +222,26 @@ function groupedFavorites() {
         <PmButton @click="confirmSave">Save</PmButton>
       </template>
     </PmModal>
+
+    <PmCredentialPicker
+      :open="showCredentialPicker"
+      :credentials="detectedCreds"
+      :loading="detecting"
+      :error="detectError"
+      @close="showCredentialPicker = false"
+      @select="applyCredential"
+      @manual="onCredentialPickerManual"
+    />
+
+    <PmConnectionModal
+      :open="showConnectionModal"
+      :connection="null"
+      :forwards="[]"
+      :favorites="[]"
+      :initial-values="connectionInitialValues"
+      @close="showConnectionModal = false"
+      @save="onConnectionSave"
+    />
   </div>
 </template>
 
