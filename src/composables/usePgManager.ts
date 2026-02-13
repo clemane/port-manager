@@ -8,6 +8,9 @@ import type {
   PgIndexInfo,
   PgQueryHistoryEntry,
   PgSavedQuery,
+  QueryTab,
+  PgViewInfo,
+  PgFunctionInfo,
 } from '@/types/pgmanager'
 
 export interface SaveConnectionParams {
@@ -49,6 +52,19 @@ const queryError = ref<string | null>(null)
 const queryHistory = ref<PgQueryHistoryEntry[]>([])
 const savedQueries = ref<PgSavedQuery[]>([])
 
+const tabs = ref<QueryTab[]>([{
+  id: crypto.randomUUID(),
+  label: 'Query 1',
+  sql: '',
+  cursorPos: 0,
+  result: null,
+  error: null,
+  loading: false,
+}])
+const activeTabId = ref<string>(tabs.value[0].id)
+const views = ref<PgViewInfo[]>([])
+const functions = ref<PgFunctionInfo[]>([])
+
 let initialized = false
 
 export function usePgManager() {
@@ -59,6 +75,7 @@ export function usePgManager() {
   const isConnected = computed(() =>
     activeConnectionId.value ? connectedIds.value.has(activeConnectionId.value) : false,
   )
+  const activeTab = computed(() => tabs.value.find(t => t.id === activeTabId.value) ?? null)
 
   // ── Connection methods ──────────────────────────────────────────────
 
@@ -221,6 +238,120 @@ export function usePgManager() {
     await loadSavedQueries()
   }
 
+  // ── Tab management ────────────────────────────────────────────────────
+
+  function createTab(label?: string, sql?: string) {
+    if (tabs.value.length >= 10) return
+    const tab: QueryTab = {
+      id: crypto.randomUUID(),
+      label: label ?? `Query ${tabs.value.length + 1}`,
+      sql: sql ?? '',
+      cursorPos: 0,
+      result: null,
+      error: null,
+      loading: false,
+    }
+    tabs.value.push(tab)
+    activeTabId.value = tab.id
+  }
+
+  function closeTab(tabId: string) {
+    const idx = tabs.value.findIndex(t => t.id === tabId)
+    if (idx === -1 || tabs.value.length <= 1) return
+    tabs.value.splice(idx, 1)
+    if (activeTabId.value === tabId) {
+      activeTabId.value = tabs.value[Math.min(idx, tabs.value.length - 1)].id
+    }
+  }
+
+  function setActiveTab(tabId: string) {
+    activeTabId.value = tabId
+  }
+
+  // ── Schema: views, functions ─────────────────────────────────────────
+
+  async function loadViews(schema: string) {
+    if (!activeConnectionId.value) return
+    views.value = await invoke<PgViewInfo[]>('pg_list_views', {
+      id: activeConnectionId.value,
+      schema,
+    })
+  }
+
+  async function loadFunctions(schema: string) {
+    if (!activeConnectionId.value) return
+    functions.value = await invoke<PgFunctionInfo[]>('pg_list_functions', {
+      id: activeConnectionId.value,
+      schema,
+    })
+  }
+
+  // ── DDL methods ──────────────────────────────────────────────────────
+
+  async function createTable(schema: string, tableName: string, columns: { name: string; data_type: string; is_primary_key: boolean; is_nullable: boolean; default_value: string | null }[]) {
+    if (!activeConnectionId.value) return
+    await invoke('pg_create_table', {
+      id: activeConnectionId.value,
+      schema,
+      tableName,
+      columns,
+    })
+  }
+
+  async function addColumn(schema: string, table: string, name: string, dataType: string, isNullable: boolean, defaultValue?: string) {
+    if (!activeConnectionId.value) return
+    await invoke('pg_add_column', {
+      id: activeConnectionId.value,
+      schema,
+      table,
+      name,
+      dataType,
+      isNullable,
+      defaultValue: defaultValue ?? null,
+    })
+  }
+
+  async function dropObject(objectType: string, schema: string, name: string, cascade = false) {
+    if (!activeConnectionId.value) return
+    await invoke('pg_drop_object', {
+      id: activeConnectionId.value,
+      objectType,
+      schema,
+      name,
+      cascade,
+    })
+  }
+
+  async function renameTable(schema: string, oldName: string, newName: string) {
+    if (!activeConnectionId.value) return
+    await invoke('pg_rename_table', {
+      id: activeConnectionId.value,
+      schema,
+      oldName,
+      newName,
+    })
+  }
+
+  // ── Export methods ───────────────────────────────────────────────────
+
+  async function exportCsv(sql: string, filePath: string) {
+    if (!activeConnectionId.value) return 0
+    return await invoke<number>('pg_export_csv', {
+      id: activeConnectionId.value,
+      sql,
+      filePath,
+    })
+  }
+
+  async function exportJson(sql: string, filePath: string) {
+    if (!activeConnectionId.value) return 0
+    return await invoke<number>('pg_export_json', {
+      id: activeConnectionId.value,
+      sql,
+      filePath,
+    })
+  }
+
   // ── Init guard (replaces onMounted) ─────────────────────────────────
   if (!initialized) {
     initialized = true
@@ -243,6 +374,11 @@ export function usePgManager() {
     queryError,
     queryHistory,
     savedQueries,
+    tabs,
+    activeTabId,
+    activeTab,
+    views,
+    functions,
     // Methods
     loadConnections,
     saveConnection,
@@ -260,5 +396,16 @@ export function usePgManager() {
     saveQuery,
     loadSavedQueries,
     deleteSavedQuery,
+    createTab,
+    closeTab,
+    setActiveTab,
+    loadViews,
+    loadFunctions,
+    createTable,
+    addColumn,
+    dropObject,
+    renameTable,
+    exportCsv,
+    exportJson,
   }
 }
