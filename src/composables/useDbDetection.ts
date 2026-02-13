@@ -24,6 +24,7 @@ export function useDbDetection() {
   }
 
   function reset() {
+    detecting.value = false
     detectedCreds.value = []
     detectError.value = null
   }

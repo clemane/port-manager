@@ -30,6 +30,7 @@ export interface ConnectionInitialValues {
   sslMode?: string
   forwardId?: string
   favoriteId?: string
+  color?: string | null
 }
 
 const props = defineProps<{
@@ -142,6 +143,7 @@ watch(() => props.open, (open) => {
         if (props.initialValues.sslMode !== undefined) sslMode.value = props.initialValues.sslMode
         if (props.initialValues.forwardId !== undefined) forwardId.value = props.initialValues.forwardId
         if (props.initialValues.favoriteId !== undefined) favoriteId.value = props.initialValues.favoriteId
+        if (props.initialValues.color !== undefined) color.value = props.initialValues.color
       }
     }
   }
