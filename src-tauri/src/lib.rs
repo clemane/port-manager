@@ -130,6 +130,14 @@ pub fn run() {
             pgmanager::pg_save_query,
             pgmanager::pg_list_saved_queries,
             pgmanager::pg_delete_saved_query,
+            pgmanager::pg_list_views,
+            pgmanager::pg_list_functions,
+            pgmanager::pg_create_table,
+            pgmanager::pg_add_column,
+            pgmanager::pg_drop_object,
+            pgmanager::pg_rename_table,
+            pgmanager::pg_export_csv,
+            pgmanager::pg_export_json,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

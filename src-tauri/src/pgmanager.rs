@@ -427,6 +427,33 @@ pub async fn pg_disconnect(
     Ok(())
 }
 
+// ── View / Function / DDL Models ──────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct PgViewInfo {
+    pub schema_name: String,
+    pub view_name: String,
+    pub definition: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PgFunctionInfo {
+    pub schema_name: String,
+    pub function_name: String,
+    pub result_type: String,
+    pub argument_types: String,
+    pub function_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateColumnDef {
+    pub name: String,
+    pub data_type: String,
+    pub is_primary_key: bool,
+    pub is_nullable: bool,
+    pub default_value: Option<String>,
+}
+
 // ── Schema Browser Models ──────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -928,4 +955,351 @@ pub async fn pg_delete_saved_query(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+// ── Views ──────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pg_list_views(
+    id: String,
+    schema: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<PgViewInfo>, String> {
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    let rows = client
+        .query(
+            "SELECT schemaname, viewname, definition \
+             FROM pg_views \
+             WHERE schemaname = $1 \
+             ORDER BY viewname",
+            &[&schema],
+        )
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    let views: Vec<PgViewInfo> = rows
+        .iter()
+        .map(|r| PgViewInfo {
+            schema_name: r.get::<_, String>(0),
+            view_name: r.get::<_, String>(1),
+            definition: r.get::<_, Option<String>>(2),
+        })
+        .collect();
+
+    Ok(views)
+}
+
+// ── Functions ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pg_list_functions(
+    id: String,
+    schema: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<PgFunctionInfo>, String> {
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    let rows = client
+        .query(
+            "SELECT \
+                n.nspname AS schema_name, \
+                p.proname AS function_name, \
+                pg_catalog.pg_get_function_result(p.oid) AS result_type, \
+                pg_catalog.pg_get_function_arguments(p.oid) AS argument_types, \
+                CASE p.prokind \
+                    WHEN 'f' THEN 'function' \
+                    WHEN 'p' THEN 'procedure' \
+                    WHEN 'a' THEN 'aggregate' \
+                    WHEN 'w' THEN 'window' \
+                    ELSE 'unknown' \
+                END AS function_type \
+             FROM pg_catalog.pg_proc p \
+             JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace \
+             WHERE n.nspname = $1 \
+             ORDER BY p.proname",
+            &[&schema],
+        )
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    let functions: Vec<PgFunctionInfo> = rows
+        .iter()
+        .map(|r| PgFunctionInfo {
+            schema_name: r.get::<_, String>(0),
+            function_name: r.get::<_, String>(1),
+            result_type: r.get::<_, String>(2),
+            argument_types: r.get::<_, String>(3),
+            function_type: r.get::<_, String>(4),
+        })
+        .collect();
+
+    Ok(functions)
+}
+
+// ── DDL Commands ───────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pg_create_table(
+    id: String,
+    schema: String,
+    table_name: String,
+    columns: Vec<CreateColumnDef>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    if columns.is_empty() {
+        return Err("At least one column is required".to_string());
+    }
+
+    let mut col_defs: Vec<String> = Vec::new();
+    let mut pk_cols: Vec<String> = Vec::new();
+
+    for col in &columns {
+        let mut def = format!("\"{}\" {}", col.name, col.data_type);
+        if !col.is_nullable {
+            def.push_str(" NOT NULL");
+        }
+        if let Some(ref default) = col.default_value {
+            def.push_str(&format!(" DEFAULT {}", default));
+        }
+        col_defs.push(def);
+        if col.is_primary_key {
+            pk_cols.push(format!("\"{}\"", col.name));
+        }
+    }
+
+    if !pk_cols.is_empty() {
+        col_defs.push(format!("PRIMARY KEY ({})", pk_cols.join(", ")));
+    }
+
+    let sql = format!(
+        "CREATE TABLE \"{}\".\"{}\" (\n  {}\n)",
+        schema,
+        table_name,
+        col_defs.join(",\n  ")
+    );
+
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    client
+        .execute(sql.as_str(), &[])
+        .await
+        .map_err(|e| format!("Create table failed: {e}"))?;
+
+    Ok(format!("Table \"{}\".\"{}\" created", schema, table_name))
+}
+
+#[tauri::command]
+pub async fn pg_add_column(
+    id: String,
+    schema: String,
+    table: String,
+    column_name: String,
+    data_type: String,
+    is_nullable: bool,
+    default_value: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let mut sql = format!(
+        "ALTER TABLE \"{}\".\"{}\" ADD COLUMN \"{}\" {}",
+        schema, table, column_name, data_type
+    );
+
+    if !is_nullable {
+        sql.push_str(" NOT NULL");
+    }
+    if let Some(ref default) = default_value {
+        sql.push_str(&format!(" DEFAULT {}", default));
+    }
+
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    client
+        .execute(sql.as_str(), &[])
+        .await
+        .map_err(|e| format!("Add column failed: {e}"))?;
+
+    Ok(format!(
+        "Column \"{}\" added to \"{}\".\"{}\"",
+        column_name, schema, table
+    ))
+}
+
+#[tauri::command]
+pub async fn pg_drop_object(
+    id: String,
+    schema: String,
+    name: String,
+    object_type: String,
+    cascade: Option<bool>,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let obj_type = object_type.to_uppercase();
+    let valid_types = ["TABLE", "VIEW", "INDEX", "FUNCTION"];
+    if !valid_types.contains(&obj_type.as_str()) {
+        return Err(format!(
+            "Invalid object type '{}'. Must be one of: TABLE, VIEW, INDEX, FUNCTION",
+            object_type
+        ));
+    }
+
+    let mut sql = format!("DROP {} \"{}\".\"{}\"", obj_type, schema, name);
+    if cascade.unwrap_or(false) {
+        sql.push_str(" CASCADE");
+    }
+
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    client
+        .execute(sql.as_str(), &[])
+        .await
+        .map_err(|e| format!("Drop failed: {e}"))?;
+
+    Ok(format!(
+        "Dropped {} \"{}\".\"{}\"",
+        obj_type, schema, name
+    ))
+}
+
+#[tauri::command]
+pub async fn pg_rename_table(
+    id: String,
+    schema: String,
+    old_name: String,
+    new_name: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let sql = format!(
+        "ALTER TABLE \"{}\".\"{}\" RENAME TO \"{}\"",
+        schema, old_name, new_name
+    );
+
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    client
+        .execute(sql.as_str(), &[])
+        .await
+        .map_err(|e| format!("Rename failed: {e}"))?;
+
+    Ok(format!(
+        "Table \"{}\".\"{}\" renamed to \"{}\"",
+        schema, old_name, new_name
+    ))
+}
+
+// ── Export Commands ────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn pg_export_csv(
+    id: String,
+    sql: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    // Drop the lock before executing the query
+    drop(pools);
+
+    let rows = client
+        .query(sql.as_str(), &[])
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    let mut wtr = csv::Writer::from_path(&file_path)
+        .map_err(|e| format!("Failed to create CSV file: {e}"))?;
+
+    // Write header row
+    if !rows.is_empty() {
+        let headers: Vec<String> = rows[0]
+            .columns()
+            .iter()
+            .map(|c| c.name().to_string())
+            .collect();
+        wtr.write_record(&headers)
+            .map_err(|e| format!("Failed to write CSV header: {e}"))?;
+    }
+
+    // Write data rows
+    let mut row_count: u64 = 0;
+    for row in &rows {
+        let values = row_to_json(row);
+        let string_values: Vec<String> = values
+            .iter()
+            .map(|v| match v {
+                serde_json::Value::Null => String::new(),
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect();
+        wtr.write_record(&string_values)
+            .map_err(|e| format!("Failed to write CSV row: {e}"))?;
+        row_count += 1;
+    }
+
+    wtr.flush()
+        .map_err(|e| format!("Failed to flush CSV: {e}"))?;
+
+    Ok(format!(
+        "Exported {} rows to {}",
+        row_count, file_path
+    ))
+}
+
+#[tauri::command]
+pub async fn pg_export_json(
+    id: String,
+    sql: String,
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let pools = state.pg_pools.lock().await;
+    let pool = pools.get(&id).ok_or("Not connected")?;
+    let client = pool.get().await.map_err(|e| format!("Pool error: {e}"))?;
+
+    // Drop the lock before executing the query
+    drop(pools);
+
+    let rows = client
+        .query(sql.as_str(), &[])
+        .await
+        .map_err(|e| format!("Query failed: {e}"))?;
+
+    // Build JSON array of objects
+    let mut json_rows: Vec<serde_json::Value> = Vec::new();
+    for row in &rows {
+        let values = row_to_json(row);
+        let columns = row.columns();
+        let mut obj = serde_json::Map::new();
+        for (i, val) in values.into_iter().enumerate() {
+            obj.insert(columns[i].name().to_string(), val);
+        }
+        json_rows.push(serde_json::Value::Object(obj));
+    }
+
+    let json_str = serde_json::to_string_pretty(&json_rows)
+        .map_err(|e| format!("JSON serialization failed: {e}"))?;
+
+    std::fs::write(&file_path, json_str)
+        .map_err(|e| format!("Failed to write JSON file: {e}"))?;
+
+    Ok(format!(
+        "Exported {} rows to {}",
+        json_rows.len(),
+        file_path
+    ))
 }
