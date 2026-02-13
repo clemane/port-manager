@@ -118,6 +118,7 @@ function getPortNumber(port: ServicePort | PodPort): number {
 function openForwardModal(port: number) {
   forwardPort.value = port
   localPort.value = ''
+  dbCheckbox.value = false
   showForwardModal.value = true
 }
 
@@ -136,8 +137,8 @@ async function createForward() {
     showForwardModal.value = false
 
     if (dbCheckbox.value && result) {
-      dbForwardId.value = result.id ?? null
-      const lp = result.local_port ?? (localPort.value ? parseInt(localPort.value) : forwardPort.value)
+      dbForwardId.value = result.id
+      const lp = result.local_port
       connectionInitialValues.value = {
         host: '127.0.0.1',
         port: lp,
@@ -179,21 +180,25 @@ function onCredentialPickerManual() {
 }
 
 async function onConnectionSave(data: ConnectionFormData) {
-  await saveConnection({
-    label: data.label || undefined,
-    forwardId: data.forwardId || undefined,
-    favoriteId: data.favoriteId || undefined,
-    host: data.host,
-    port: data.port,
-    databaseName: data.databaseName,
-    username: data.username,
-    password: data.password || undefined,
-    sslMode: data.sslMode,
-    color: data.color || undefined,
-  })
-  showConnectionModal.value = false
-  resetDetection()
-  router.push('/database')
+  try {
+    await saveConnection({
+      label: data.label || undefined,
+      forwardId: data.forwardId || undefined,
+      favoriteId: data.favoriteId || undefined,
+      host: data.host,
+      port: data.port,
+      databaseName: data.databaseName,
+      username: data.username,
+      password: data.password || undefined,
+      sslMode: data.sslMode,
+      color: data.color || undefined,
+    })
+    showConnectionModal.value = false
+    resetDetection()
+    router.push('/database')
+  } catch (e) {
+    alert(String(e))
+  }
 }
 </script>
 
