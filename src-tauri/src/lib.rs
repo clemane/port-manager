@@ -3,6 +3,7 @@ mod favorites;
 mod forward;
 mod k8s;
 mod kubeconfig;
+mod ngrok;
 mod ports;
 mod settings;
 
@@ -15,6 +16,22 @@ pub struct AppState {
 #[tauri::command]
 fn get_system_ports() -> Vec<ports::SystemPort> {
     ports::scan_ports()
+}
+
+#[tauri::command]
+fn read_file_content(path: String) -> Result<String, String> {
+    // Expand ~ to home directory
+    let expanded = if path.starts_with("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            format!("{}/{}", home, &path[2..])
+        } else {
+            path.clone()
+        }
+    } else {
+        path.clone()
+    };
+    std::fs::read_to_string(&expanded)
+        .map_err(|e| format!("Cannot read {}: {}", expanded, e))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -47,12 +64,22 @@ pub fn run() {
                 log::info!("{} stale forwards cleaned up on startup", stale_count);
             }
 
+            let ngrok_stale_count =
+                tauri::async_runtime::block_on(ngrok::cleanup_stale_tunnels(&pool))
+                    .map(|stale| stale.len())
+                    .unwrap_or(0);
+
+            if ngrok_stale_count > 0 {
+                log::info!("{} stale ngrok tunnels cleaned up on startup", ngrok_stale_count);
+            }
+
             app.manage(AppState { db: pool });
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_system_ports,
+            read_file_content,
             kubeconfig::import_kubeconfig,
             kubeconfig::list_kubeconfigs,
             kubeconfig::delete_kubeconfig,
@@ -68,6 +95,15 @@ pub fn run() {
             forward::kill_forward,
             forward::restart_forward,
             forward::list_forwards,
+            ngrok::add_ngrok_domain,
+            ngrok::list_ngrok_domains,
+            ngrok::delete_ngrok_domain,
+            ngrok::create_tunnel,
+            ngrok::kill_tunnel,
+            ngrok::restart_tunnel,
+            ngrok::list_tunnels,
+            ngrok::sync_ngrok_domains,
+            ngrok::detect_running_tunnels,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
