@@ -1,7 +1,7 @@
 import { ref, watchEffect } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 
-export type Theme = 'dark' | 'light' | 'cyberpunk'
+export type Theme = 'dark' | 'light' | 'cyberpunk' | 'matrix'
 
 const currentTheme = ref<Theme>('dark')
 

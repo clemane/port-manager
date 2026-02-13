@@ -320,7 +320,8 @@ pub async fn list_tunnels(state: State<'_, AppState>) -> Result<Vec<NgrokTunnel>
     .await
     .map_err(|e| e.to_string())?;
 
-    // Check liveness of running tunnels via kill(pid, 0)
+    // Check liveness of running tunnels that have a PID (spawned by us).
+    // Tunnels without PID are externally managed — leave them as-is.
     let mut dead_ids: Vec<String> = Vec::new();
     for tunnel in &mut tunnels {
         if tunnel.status == "running" {
@@ -331,9 +332,6 @@ pub async fn list_tunnels(state: State<'_, AppState>) -> Result<Vec<NgrokTunnel>
                     tunnel.pid = None;
                     dead_ids.push(tunnel.id.clone());
                 }
-            } else {
-                tunnel.status = "stopped".to_string();
-                dead_ids.push(tunnel.id.clone());
             }
         }
     }
@@ -467,9 +465,9 @@ pub async fn detect_running_tunnels(
             continue;
         }
 
-        // Check if we already track a running tunnel for this domain + port
-        let existing: Option<(String,)> = sqlx::query_as(
-            "SELECT id FROM ngrok_tunnels WHERE domain = ? AND local_port = ? AND status = 'running'",
+        // Check if we already track this domain + port (any status)
+        let existing: Option<(String, String)> = sqlx::query_as(
+            "SELECT id, status FROM ngrok_tunnels WHERE domain = ? AND local_port = ?",
         )
         .bind(domain)
         .bind(local_port)
@@ -477,7 +475,19 @@ pub async fn detect_running_tunnels(
         .await
         .map_err(|e| e.to_string())?;
 
-        if existing.is_some() {
+        if let Some((existing_id, status)) = existing {
+            if status != "running" {
+                // Reactivate the existing stopped entry
+                sqlx::query(
+                    "UPDATE ngrok_tunnels SET status = 'running', tunnel_url = ?, started_at = ?, error_msg = NULL WHERE id = ?",
+                )
+                .bind(&tunnel.public_url)
+                .bind(&now)
+                .bind(&existing_id)
+                .execute(&state.db)
+                .await
+                .map_err(|e| e.to_string())?;
+            }
             continue;
         }
 

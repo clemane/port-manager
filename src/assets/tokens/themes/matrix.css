@@ -1,0 +1,42 @@
+[data-theme="matrix"] {
+  --pm-bg: #000000;
+  --pm-surface: #020a02;
+  --pm-surface-hover: #041a04;
+  --pm-surface-active: #062a06;
+  --pm-border: #0a3a0a;
+  --pm-border-subtle: #061a06;
+
+  --pm-text-primary: #00ff41;
+  --pm-text-secondary: #00cc33;
+  --pm-text-muted: #006622;
+
+  --pm-accent: #00ff41;
+  --pm-accent-hover: #33ff66;
+  --pm-accent-text: #000000;
+
+  --pm-success: #00ff41;
+  --pm-danger: #ff0040;
+  --pm-warning: #ccff00;
+  --pm-info: #00ff41;
+
+  --pm-sidebar-bg: #010801;
+  --pm-sidebar-active: #041a04;
+  --pm-sidebar-text: #006622;
+  --pm-sidebar-text-active: #00ff41;
+
+  --pm-badge-running-bg: rgba(0, 255, 65, 0.1);
+  --pm-badge-running-text: #00ff41;
+  --pm-badge-error-bg: rgba(255, 0, 64, 0.1);
+  --pm-badge-error-text: #ff0040;
+  --pm-badge-stopped-bg: rgba(0, 102, 34, 0.1);
+  --pm-badge-stopped-text: #006622;
+  --pm-badge-info-bg: rgba(0, 255, 65, 0.08);
+  --pm-badge-info-text: #00cc33;
+
+  --pm-shadow: 0 0 15px rgba(0, 255, 65, 0.08);
+  --pm-radius: 2px;
+  --pm-radius-sm: 1px;
+  --pm-radius-lg: 4px;
+
+  --pm-glow-matrix: 0 0 8px rgba(0, 255, 65, 0.3);
+}
