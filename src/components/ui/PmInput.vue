@@ -1,7 +1,7 @@
 <script setup lang="ts">
 defineProps<{
   modelValue?: string | number
-  type?: 'text' | 'search' | 'number'
+  type?: 'text' | 'search' | 'number' | 'password'
   placeholder?: string
   disabled?: boolean
 }>()

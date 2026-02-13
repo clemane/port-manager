@@ -16,6 +16,7 @@ const navItems = [
   { path: '/', label: 'Dashboard', icon: '\u229E' },
   { path: '/k8s', label: 'Kubernetes', icon: '\u2638' },
   { path: '/forwards', label: 'Forwards', icon: '\u21C4' },
+  { path: '/ngrok', label: 'Ngrok', icon: '\u2197' },
   { path: '/settings', label: 'Settings', icon: '\u2699' },
 ]
 

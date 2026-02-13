@@ -16,15 +16,22 @@ interface KubeconfigInfo {
 const kubeconfigs = ref<KubeconfigInfo[]>([])
 const portRangeStart = ref('3000')
 const portRangeEnd = ref('4000')
+const ngrokAuthtoken = ref('')
+const ngrokApiKey = ref('')
+const ngrokSaved = ref(false)
+const ngrokApiKeySaved = ref(false)
 const importName = ref('')
 const importContent = ref('')
+const importFilePath = ref('')
 const showImportForm = ref(false)
 const importError = ref('')
+const loadingFile = ref(false)
 
 const themes: { value: string; label: string }[] = [
   { value: 'dark', label: 'Dark' },
   { value: 'light', label: 'Light' },
   { value: 'cyberpunk', label: 'Cyber' },
+  { value: 'matrix', label: 'Matrix' },
 ]
 
 onMounted(async () => {
@@ -44,10 +51,32 @@ async function loadSettings() {
   try {
     const start = await invoke<string | null>('get_setting', { key: 'port_range_start' })
     const end = await invoke<string | null>('get_setting', { key: 'port_range_end' })
+    const token = await invoke<string | null>('get_setting', { key: 'ngrok_authtoken' })
+    const apiKey = await invoke<string | null>('get_setting', { key: 'ngrok_api_key' })
     if (start) portRangeStart.value = start
     if (end) portRangeEnd.value = end
+    if (token) ngrokAuthtoken.value = token
+    if (apiKey) ngrokApiKey.value = apiKey
   } catch {
     // Use defaults
+  }
+}
+
+async function loadFromFile() {
+  if (!importFilePath.value.trim()) {
+    importError.value = 'Please enter a file path'
+    return
+  }
+  loadingFile.value = true
+  importError.value = ''
+  try {
+    const content = await invoke<string>('read_file_content', { path: importFilePath.value.trim() })
+    importContent.value = content
+    importFilePath.value = ''
+  } catch (e) {
+    importError.value = `Failed to read file: ${e}`
+  } finally {
+    loadingFile.value = false
   }
 }
 
@@ -59,7 +88,7 @@ async function importKubeconfig() {
     return
   }
   if (!importContent.value.trim()) {
-    importError.value = 'Please paste your kubeconfig YAML content'
+    importError.value = 'Please paste or load your kubeconfig YAML content'
     return
   }
 
@@ -81,6 +110,7 @@ async function importKubeconfig() {
 function cancelImport() {
   importName.value = ''
   importContent.value = ''
+  importFilePath.value = ''
   importError.value = ''
   showImportForm.value = false
 }
@@ -100,6 +130,26 @@ async function savePortRange() {
   try {
     await invoke('set_setting', { key: 'port_range_start', value: portRangeStart.value })
     await invoke('set_setting', { key: 'port_range_end', value: portRangeEnd.value })
+  } catch {
+    // Silently fail
+  }
+}
+
+async function saveNgrokAuthtoken() {
+  try {
+    await invoke('set_setting', { key: 'ngrok_authtoken', value: ngrokAuthtoken.value })
+    ngrokSaved.value = true
+    setTimeout(() => { ngrokSaved.value = false }, 2000)
+  } catch {
+    // Silently fail
+  }
+}
+
+async function saveNgrokApiKey() {
+  try {
+    await invoke('set_setting', { key: 'ngrok_api_key', value: ngrokApiKey.value })
+    ngrokApiKeySaved.value = true
+    setTimeout(() => { ngrokApiKeySaved.value = false }, 2000)
   } catch {
     // Silently fail
   }
@@ -146,10 +196,20 @@ async function savePortRange() {
 
       <div v-else class="import-form">
         <PmInput v-model="importName" placeholder="Cluster name (e.g., production)" />
+        <div class="file-load-row">
+          <PmInput
+            v-model="importFilePath"
+            placeholder="File path (e.g., ~/.kube/config)"
+            class="file-load-input"
+          />
+          <PmButton variant="ghost" :disabled="loadingFile" @click="loadFromFile">
+            {{ loadingFile ? 'Loading...' : 'Load file' }}
+          </PmButton>
+        </div>
         <textarea
           v-model="importContent"
           class="import-textarea"
-          placeholder="Paste your kubeconfig YAML content here..."
+          placeholder="Paste your kubeconfig YAML content or load from file above..."
           rows="8"
         />
         <p v-if="importError" class="import-error">{{ importError }}</p>
@@ -157,6 +217,25 @@ async function savePortRange() {
           <PmButton @click="importKubeconfig">Import</PmButton>
           <PmButton variant="ghost" @click="cancelImport">Cancel</PmButton>
         </div>
+      </div>
+    </section>
+
+    <!-- Ngrok Authtoken -->
+    <section class="settings__section">
+      <h2 class="section-title">Ngrok Authtoken</h2>
+      <p class="section-desc">Your ngrok authentication token for launching tunnels</p>
+      <div class="ngrok-token-row">
+        <PmInput v-model="ngrokAuthtoken" type="password" placeholder="Paste your ngrok authtoken" />
+        <PmButton variant="ghost" @click="saveNgrokAuthtoken">
+          {{ ngrokSaved ? 'Saved!' : 'Save' }}
+        </PmButton>
+      </div>
+      <p class="section-desc" style="margin-top: 16px;">API key for syncing reserved domains from your ngrok account</p>
+      <div class="ngrok-token-row">
+        <PmInput v-model="ngrokApiKey" type="password" placeholder="Paste your ngrok API key" />
+        <PmButton variant="ghost" @click="saveNgrokApiKey">
+          {{ ngrokApiKeySaved ? 'Saved!' : 'Save' }}
+        </PmButton>
       </div>
     </section>
 
@@ -253,6 +332,16 @@ async function savePortRange() {
   max-width: 500px;
 }
 
+.file-load-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.file-load-input {
+  flex: 1;
+}
+
 .import-textarea {
   background: var(--pm-surface);
   color: var(--pm-text-primary);
@@ -283,6 +372,13 @@ async function savePortRange() {
 .import-actions {
   display: flex;
   gap: 8px;
+}
+
+.ngrok-token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 500px;
 }
 
 .port-range {

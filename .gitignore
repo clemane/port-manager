@@ -12,6 +12,20 @@ dist
 dist-ssr
 *.local
 
+# Rust / Tauri build artifacts
+src-tauri/target/
+
+# Database & secrets (should never be committed)
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+.env
+.env.*
+*.pem
+*.key
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

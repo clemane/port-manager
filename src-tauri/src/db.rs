@@ -23,11 +23,17 @@ pub async fn init_db(app_dir: PathBuf) -> Result<SqlitePool> {
         .await?;
 
     // Run migrations - split by semicolons since sqlx doesn't support multiple statements
-    let migration_sql = include_str!("../migrations/001_init.sql");
-    for statement in migration_sql.split(';') {
-        let trimmed = statement.trim();
-        if !trimmed.is_empty() {
-            sqlx::query(trimmed).execute(&pool).await?;
+    let migrations = [
+        include_str!("../migrations/001_init.sql"),
+        include_str!("../migrations/002_ngrok.sql"),
+    ];
+
+    for migration_sql in migrations {
+        for statement in migration_sql.split(';') {
+            let trimmed = statement.trim();
+            if !trimmed.is_empty() {
+                sqlx::query(trimmed).execute(&pool).await?;
+            }
         }
     }
 
