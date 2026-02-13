@@ -70,15 +70,20 @@ function select(value: string) {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  background: var(--pm-surface);
+  height: 36px;
+  background: var(--pm-surface-elevated);
   color: var(--pm-text-primary);
   border: 1px solid var(--pm-border);
   border-radius: var(--pm-radius-sm);
   padding: 6px 12px;
   font-size: 13px;
   cursor: pointer;
-  font-family: inherit;
-  transition: border-color 0.15s;
+  font-family: var(--pm-font-body);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pm-select--open .pm-select__trigger {
+  border-color: var(--pm-accent);
+  box-shadow: 0 0 0 3px var(--pm-accent-glow);
 }
 .pm-select__placeholder { color: var(--pm-text-muted); }
 .pm-select__arrow { font-size: 10px; color: var(--pm-text-muted); }
@@ -87,7 +92,7 @@ function select(value: string) {
   top: calc(100% + 4px);
   left: 0;
   right: 0;
-  background: var(--pm-surface);
+  background: var(--pm-surface-elevated);
   border: 1px solid var(--pm-border);
   border-radius: var(--pm-radius-sm);
   box-shadow: var(--pm-shadow);
@@ -104,7 +109,7 @@ function select(value: string) {
   color: var(--pm-text-primary);
   font-size: 13px;
   outline: none;
-  font-family: inherit;
+  font-family: var(--pm-font-body);
 }
 .pm-select__search::placeholder { color: var(--pm-text-muted); }
 .pm-select__option {
@@ -117,8 +122,8 @@ function select(value: string) {
   color: var(--pm-text-primary);
   font-size: 13px;
   cursor: pointer;
-  font-family: inherit;
-  transition: background 0.1s;
+  font-family: var(--pm-font-body);
+  transition: background 0.15s;
 }
 .pm-select__option:hover { background: var(--pm-surface-hover); }
 .pm-select__option--selected { color: var(--pm-accent); }
