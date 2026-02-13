@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 use k8s_openapi::api::core::v1::{Namespace, Pod, Secret, Service};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
@@ -230,6 +231,12 @@ const DATABASE_KEYS: &[&str] = &[
 const HOST_KEYS: &[&str] = &["DB_HOST", "DATABASE_HOST", "PGHOST", "host"];
 const PORT_KEYS: &[&str] = &["DB_PORT", "DATABASE_PORT", "PGPORT", "port"];
 const URL_KEYS: &[&str] = &["DATABASE_URL", "POSTGRES_URL", "PG_URL", "DB_URL"];
+const SSL_KEYS: &[&str] = &["PGSSLMODE", "DB_SSLMODE", "SSL_MODE"];
+
+static DATABASE_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"postgres(?:ql)?://([^:]+):(.+)@([^@:/]+)(?::(\d+))?/([^\s?]+)")
+        .expect("invalid regex")
+});
 
 /// Intermediate mutable builder used while scanning keys.
 #[derive(Default, Clone)]
@@ -244,34 +251,58 @@ struct CredBuilder {
 
 impl CredBuilder {
     /// Try to match a key/value pair against all known DB key names.
+    /// First-write-wins: a field is only set if it is still `None`.
     fn ingest(&mut self, key: &str, value: &str) {
-        if PASSWORD_KEYS.contains(&key) {
+        if PASSWORD_KEYS.contains(&key) && self.password.is_none() {
             self.password = Some(value.to_string());
-        } else if USER_KEYS.contains(&key) {
+        } else if USER_KEYS.contains(&key) && self.username.is_none() {
             self.username = Some(value.to_string());
-        } else if DATABASE_KEYS.contains(&key) {
+        } else if DATABASE_KEYS.contains(&key) && self.database.is_none() {
             self.database = Some(value.to_string());
-        } else if HOST_KEYS.contains(&key) {
+        } else if HOST_KEYS.contains(&key) && self.host.is_none() {
             self.host = Some(value.to_string());
-        } else if PORT_KEYS.contains(&key) {
-            if let Ok(p) = value.parse::<u16>() {
-                self.port = Some(p);
-            }
+        } else if PORT_KEYS.contains(&key) && self.port.is_none() {
+            self.port = value.parse().ok();
+        } else if SSL_KEYS.contains(&key) && self.ssl_mode.is_none() {
+            self.ssl_mode = Some(value.to_string());
         }
     }
 
     /// Try to parse a DATABASE_URL style connection string and fill fields.
+    /// First-write-wins: a field is only set if it is still `None`.
     fn ingest_url(&mut self, url: &str) {
-        let re = Regex::new(r"postgres(?:ql)?://([^:]+):([^@]+)@([^:/]+):(\d+)/([^\s?]+)")
-            .expect("invalid regex");
-        if let Some(caps) = re.captures(url) {
-            self.username = Some(caps[1].to_string());
-            self.password = Some(caps[2].to_string());
-            self.host = Some(caps[3].to_string());
-            if let Ok(p) = caps[4].parse::<u16>() {
-                self.port = Some(p);
+        if let Some(caps) = DATABASE_URL_RE.captures(url) {
+            if self.username.is_none() {
+                self.username = Some(caps[1].to_string());
             }
-            self.database = Some(caps[5].to_string());
+            if self.password.is_none() {
+                self.password = Some(caps[2].to_string());
+            }
+            if self.host.is_none() {
+                self.host = Some(caps[3].to_string());
+            }
+            if self.port.is_none() {
+                self.port = Some(
+                    caps.get(4)
+                        .and_then(|m| m.as_str().parse().ok())
+                        .unwrap_or(5432),
+                );
+            }
+            if self.database.is_none() {
+                self.database = Some(caps[5].to_string());
+            }
+        }
+
+        // Extract sslmode from query string if present.
+        if self.ssl_mode.is_none() {
+            if let Some(qs_start) = url.find('?') {
+                let qs = &url[qs_start + 1..];
+                for param in qs.split('&') {
+                    if let Some(val) = param.strip_prefix("sslmode=") {
+                        self.ssl_mode = Some(val.to_string());
+                    }
+                }
+            }
         }
     }
 
@@ -373,8 +404,9 @@ pub async fn detect_db_credentials(
         for (key, value) in &decoded {
             if URL_KEYS.contains(&key.as_str()) {
                 builder.ingest_url(value);
+            } else {
+                builder.ingest(key.as_str(), value);
             }
-            builder.ingest(key.as_str(), value);
         }
 
         if builder.has_any() {
@@ -413,8 +445,9 @@ pub async fn detect_db_credentials(
                 if let Some(value) = &env_var.value {
                     if URL_KEYS.contains(&key.as_str()) {
                         builder.ingest_url(value);
+                    } else {
+                        builder.ingest(key.as_str(), value);
                     }
-                    builder.ingest(key.as_str(), value);
                     continue;
                 }
 
@@ -431,8 +464,9 @@ pub async fn detect_db_credentials(
                             if let Some(resolved_value) = secret_data.get(secret_key) {
                                 if URL_KEYS.contains(&key.as_str()) {
                                     builder.ingest_url(resolved_value);
+                                } else {
+                                    builder.ingest(key.as_str(), resolved_value);
                                 }
-                                builder.ingest(key.as_str(), resolved_value);
                             }
                         }
                     }
