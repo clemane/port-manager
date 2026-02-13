@@ -20,6 +20,18 @@ export interface ConnectionFormData {
   color: string | null
 }
 
+export interface ConnectionInitialValues {
+  label?: string
+  host?: string
+  port?: number
+  databaseName?: string
+  username?: string
+  password?: string
+  sslMode?: string
+  forwardId?: string
+  favoriteId?: string
+}
+
 const props = defineProps<{
   open: boolean
   connection: PgConnection | null
@@ -27,6 +39,7 @@ const props = defineProps<{
   favorites: { id: string; label: string }[]
   testResult?: string | null
   testLoading?: boolean
+  initialValues?: ConnectionInitialValues | null
 }>()
 
 const emit = defineEmits<{
@@ -119,6 +132,17 @@ watch(() => props.open, (open) => {
       populateFromConnection(props.connection)
     } else {
       resetForm()
+      if (props.initialValues) {
+        if (props.initialValues.label !== undefined) label.value = props.initialValues.label
+        if (props.initialValues.host !== undefined) host.value = props.initialValues.host
+        if (props.initialValues.port !== undefined) port.value = props.initialValues.port
+        if (props.initialValues.databaseName !== undefined) databaseName.value = props.initialValues.databaseName
+        if (props.initialValues.username !== undefined) username.value = props.initialValues.username
+        if (props.initialValues.password !== undefined) password.value = props.initialValues.password
+        if (props.initialValues.sslMode !== undefined) sslMode.value = props.initialValues.sslMode
+        if (props.initialValues.forwardId !== undefined) forwardId.value = props.initialValues.forwardId
+        if (props.initialValues.favoriteId !== undefined) favoriteId.value = props.initialValues.favoriteId
+      }
     }
   }
 })
