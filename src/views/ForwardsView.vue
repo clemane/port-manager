@@ -113,21 +113,25 @@ function onCredentialPickerManual() {
 }
 
 async function onConnectionSave(data: ConnectionFormData) {
-  await saveConnection({
-    label: data.label || undefined,
-    forwardId: data.forwardId || undefined,
-    favoriteId: data.favoriteId || undefined,
-    host: data.host,
-    port: data.port,
-    databaseName: data.databaseName,
-    username: data.username,
-    password: data.password || undefined,
-    sslMode: data.sslMode,
-    color: data.color || undefined,
-  })
-  showConnectionModal.value = false
-  resetDetection()
-  router.push('/database')
+  try {
+    await saveConnection({
+      label: data.label || undefined,
+      forwardId: data.forwardId || undefined,
+      favoriteId: data.favoriteId || undefined,
+      host: data.host,
+      port: data.port,
+      databaseName: data.databaseName,
+      username: data.username,
+      password: data.password || undefined,
+      sslMode: data.sslMode,
+      color: data.color || undefined,
+    })
+    showConnectionModal.value = false
+    resetDetection()
+    router.push('/database')
+  } catch (e) {
+    alert(String(e))
+  }
 }
 </script>
 
