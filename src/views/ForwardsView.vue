@@ -1,25 +1,28 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { PmButton, PmBadge, PmTable, PmModal, PmInput } from '@/components/ui'
+import { ref, computed } from 'vue'
+import { PmButton, PmBadge, PmTable, PmModal, PmInput, PmMetricCard, PmStatusDot } from '@/components/ui'
 import { useForwards } from '@/composables/useForwards'
 import type { ActiveForward } from '@/composables/useForwards'
 
 const { forwards, favorites, killForward, restartForward, launchFavorite, deleteFavorite, saveFavorite } = useForwards()
 
-// Save favorite modal
 const showSaveModal = ref(false)
 const saveTarget = ref<ActiveForward | null>(null)
 const favoriteLabel = ref('')
 const favoriteGroup = ref('')
+const copiedId = ref<string | null>(null)
 
 const columns = [
   { key: 'resource_name', label: 'Resource', sortable: true },
   { key: 'namespace', label: 'Namespace', sortable: true },
   { key: 'local_port', label: 'Local Port', sortable: true, width: '100px' },
   { key: 'remote_port', label: 'Remote Port', sortable: true, width: '100px' },
-  { key: 'status', label: 'Status', sortable: true, width: '100px' },
-  { key: 'actions', label: 'Actions', width: '180px' },
+  { key: 'status', label: 'Status', sortable: true, width: '110px' },
+  { key: 'actions', label: 'Actions', width: '160px' },
 ]
+
+const activeCount = computed(() => forwards.value.filter(f => f.status === 'running').length)
+const errorCount = computed(() => forwards.value.filter(f => f.status === 'error').length)
 
 function statusVariant(status: string): 'running' | 'error' | 'stopped' {
   if (status === 'running') return 'running'
@@ -27,8 +30,10 @@ function statusVariant(status: string): 'running' | 'error' | 'stopped' {
   return 'stopped'
 }
 
-function copyUrl(port: number) {
+function copyUrl(id: string, port: number) {
   navigator.clipboard.writeText(`localhost:${port}`)
+  copiedId.value = id
+  setTimeout(() => { copiedId.value = null }, 1500)
 }
 
 function openSaveModal(forward: ActiveForward) {
@@ -45,7 +50,6 @@ async function confirmSave() {
   }
 }
 
-// Group favorites by group_name
 function groupedFavorites() {
   const groups = new Map<string, typeof favorites.value>()
   for (const fav of favorites.value) {
@@ -59,55 +63,66 @@ function groupedFavorites() {
 
 <template>
   <div class="forwards">
-    <div class="forwards__header">
-      <h1 class="view-title">Port Forwards</h1>
-      <p class="view-subtitle">Manage active forwards and favorites</p>
+    <div class="forwards__metrics">
+      <PmMetricCard label="Active" :value="activeCount" color="success" />
+      <PmMetricCard label="Errored" :value="errorCount" color="danger" />
+      <PmMetricCard label="Favorites" :value="favorites.length" color="accent" />
     </div>
 
-    <!-- Favorites Section -->
+    <!-- Favorites -->
     <section v-if="favorites.length > 0" class="forwards__favorites">
       <h2 class="section-title">Favorites</h2>
       <div v-for="[group, favs] in groupedFavorites()" :key="group" class="favorite-group">
         <h3 class="group-title">{{ group }}</h3>
-        <div class="favorite-cards">
+        <div class="favorite-grid">
           <div v-for="fav in favs" :key="fav.id" class="favorite-card">
             <div class="favorite-card__info">
               <span class="favorite-card__label">{{ fav.label }}</span>
               <span class="favorite-card__detail">
-                {{ fav.resource_type }}/{{ fav.resource_name }} : {{ fav.remote_port }}
+                {{ fav.resource_type }}/{{ fav.resource_name }}:{{ fav.remote_port }}
               </span>
             </div>
             <div class="favorite-card__actions">
               <PmButton size="sm" @click="launchFavorite(fav)">Launch</PmButton>
-              <PmButton size="sm" variant="danger" @click="deleteFavorite(fav.id)">Delete</PmButton>
+              <PmButton size="sm" variant="icon" @click="deleteFavorite(fav.id)" title="Delete">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke-linecap="round"/></svg>
+              </PmButton>
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- Active Forwards Table -->
+    <!-- Active Forwards -->
     <section class="forwards__active">
       <h2 class="section-title">Active Forwards</h2>
       <PmTable :data="forwards" :columns="columns">
         <template #cell-resource_name="{ row }">
-          <span class="resource-name">{{ row.resource_type }}/{{ row.resource_name }}</span>
+          <span class="mono-data">{{ row.resource_type }}/{{ row.resource_name }}</span>
         </template>
         <template #cell-local_port="{ value }">
-          <span class="port-mono">{{ value }}</span>
+          <span class="mono-data">{{ value }}</span>
         </template>
         <template #cell-remote_port="{ value }">
-          <span class="port-mono">{{ value }}</span>
+          <span class="mono-data">{{ value }}</span>
         </template>
-        <template #cell-status="{ value }">
-          <PmBadge :variant="statusVariant(value)">{{ value }}</PmBadge>
+        <template #cell-status="{ row }">
+          <span class="status-cell">
+            <PmStatusDot :status="statusVariant(row.status)" />
+            <span>{{ row.status }}</span>
+          </span>
         </template>
         <template #cell-actions="{ row }">
           <div class="action-btns">
             <PmButton v-if="row.status === 'running'" size="sm" variant="danger" @click="killForward(row.id)">Kill</PmButton>
-            <PmButton v-if="row.status !== 'running'" size="sm" variant="ghost" @click="restartForward(row.id)">Restart</PmButton>
-            <PmButton size="sm" variant="icon" @click="copyUrl(row.local_port)" title="Copy URL">📋</PmButton>
-            <PmButton size="sm" variant="icon" @click="openSaveModal(row)" title="Save as favorite">⭐</PmButton>
+            <PmButton v-else size="sm" variant="ghost" @click="restartForward(row.id)">Restart</PmButton>
+            <PmButton size="sm" variant="icon" @click="copyUrl(row.id, row.local_port)" :title="copiedId === row.id ? 'Copied!' : 'Copy URL'">
+              <svg v-if="copiedId !== row.id" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><rect x="5" y="5" width="8" height="8" rx="1"/><path d="M3 11V3h8" stroke-linecap="round"/></svg>
+              <svg v-else viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><path d="M4 8l3 3 5-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </PmButton>
+            <PmButton size="sm" variant="icon" @click="openSaveModal(row)" title="Save as favorite">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><path d="M8 2l2 4 4.5.7-3.2 3.1.8 4.5L8 12l-4.1 2.3.8-4.5L1.5 6.7 6 6z" stroke-linejoin="round"/></svg>
+            </PmButton>
           </div>
         </template>
       </PmTable>
@@ -134,46 +149,106 @@ function groupedFavorites() {
 </template>
 
 <style scoped>
-.forwards__header { margin-bottom: 20px; }
-.view-title { font-size: 20px; font-weight: 600; color: var(--pm-text-primary); margin: 0 0 4px; }
-.view-subtitle { font-size: 13px; color: var(--pm-text-secondary); margin: 0; }
+.forwards__metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
 
 .section-title {
+  font-family: var(--pm-font-display);
   font-size: 14px;
   font-weight: 600;
   color: var(--pm-text-primary);
   margin: 0 0 12px;
 }
 
-.forwards__favorites { margin-bottom: 32px; }
+.forwards__favorites {
+  margin-bottom: 32px;
+}
+
 .group-title {
-  font-size: 12px;
+  font-family: var(--pm-font-body);
+  font-size: 11px;
   color: var(--pm-text-muted);
   text-transform: uppercase;
+  letter-spacing: 0.05em;
   margin: 0 0 8px;
 }
-.favorite-cards { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+
+.favorite-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
 .favorite-card {
   background: var(--pm-surface);
   border: 1px solid var(--pm-border);
   border-radius: var(--pm-radius);
-  padding: 12px;
+  padding: 12px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  min-width: 280px;
+  gap: 12px;
+  transition: border-color 0.15s;
 }
-.favorite-card__label { font-weight: 500; font-size: 13px; color: var(--pm-text-primary); display: block; }
-.favorite-card__detail { font-size: 11px; color: var(--pm-text-muted); font-family: monospace; }
-.favorite-card__actions { display: flex; gap: 4px; }
 
-.resource-name { font-family: monospace; font-size: 13px; }
-.port-mono { font-family: monospace; }
-.action-btns { display: flex; gap: 4px; }
+.favorite-card:hover {
+  border-color: var(--pm-accent);
+}
 
-.save-form { display: flex; flex-direction: column; gap: 12px; }
+.favorite-card__label {
+  font-family: var(--pm-font-body);
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--pm-text-primary);
+  display: block;
+}
+
+.favorite-card__detail {
+  font-family: var(--pm-font-mono);
+  font-size: 11px;
+  color: var(--pm-text-muted);
+}
+
+.favorite-card__actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.forwards__active {
+  margin-bottom: 24px;
+}
+
+.mono-data {
+  font-family: var(--pm-font-mono);
+  font-size: 12px;
+}
+
+.status-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.action-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.save-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .form-label {
+  font-family: var(--pm-font-body);
   font-size: 13px;
   color: var(--pm-text-secondary);
   display: flex;
