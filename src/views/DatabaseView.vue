@@ -210,8 +210,9 @@ const statsText = computed(() => {
     <div class="db-toolbar">
       <div class="db-toolbar__left">
         <PmSelect
-          v-model="activeConnectionId!"
+          :model-value="activeConnectionId ?? ''"
           :options="connectionOptions"
+          @update:model-value="activeConnectionId = $event || null"
           placeholder="Select connection..."
           :searchable="true"
           class="db-toolbar__select"
