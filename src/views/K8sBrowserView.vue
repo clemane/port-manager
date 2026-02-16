@@ -148,7 +148,7 @@ async function createForward() {
       if (detectedCreds.value.length > 1) {
         showCredentialPicker.value = true
       } else if (detectedCreds.value.length === 1) {
-        applyCredential(detectedCreds.value[0])
+        applyCredential(detectedCreds.value[0]!)
       } else {
         showConnectionModal.value = true
       }

@@ -22,10 +22,10 @@ import type {
 const {
   connections, activeConnectionId, activeConnection, isConnected,
   schemas, tables, columns, indexes, views, functions,
-  queryResult, queryLoading, queryError,
+  queryResult, queryError,
   queryHistory, savedQueries,
   tabs, activeTabId, activeTab,
-  loadConnections, saveConnection, deleteConnection, testConnection,
+  saveConnection, testConnection,
   connect, disconnect,
   loadSchemas, loadTables, loadColumns, loadIndexes, getRowCount,
   executeQuery,
@@ -273,7 +273,7 @@ async function runExplain() {
     await executeQuery(explainSql)
     if (queryResult.value && queryResult.value.rows.length > 0) {
       try {
-        const raw = queryResult.value.rows[0][0]
+        const raw = queryResult.value.rows[0]![0]
         explainPlan.value = typeof raw === 'string' ? JSON.parse(raw) : raw
         resultView.value = 'explain'
       } catch (parseError) {
@@ -963,7 +963,7 @@ const connectionInfo = computed(() => {
                   >
                     <template v-for="col in tableColumns" :key="col.key" #[`cell-${col.key}`]="{ row, value }">
                       <input
-                        v-if="editingCell?.rowIdx === row.__rowIndex && editingCell?.col === col.key"
+                        v-if="editingCell?.rowIdx === (row.__rowIndex as number) && editingCell?.col === col.key"
                         :value="editValue"
                         @input="editValue = ($event.target as HTMLInputElement).value"
                         @blur="commitEdit"
@@ -974,10 +974,10 @@ const connectionInfo = computed(() => {
                       <span
                         v-else
                         class="cell-display"
-                        :class="{ 'cell-display--modified': isCellModified(row.__rowIndex, col.key) }"
-                        @dblclick="startEdit(row.__rowIndex, col.key, value)"
+                        :class="{ 'cell-display--modified': isCellModified(row.__rowIndex as number, col.key) }"
+                        @dblclick="startEdit(row.__rowIndex as number, col.key, value)"
                       >
-                        {{ getCellValue(row.__rowIndex, col.key, value) }}
+                        {{ getCellValue(row.__rowIndex as number, col.key, value) }}
                       </span>
                     </template>
                   </PmTable>
