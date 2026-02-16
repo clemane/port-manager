@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import type { PgTableInfo, PgColumnInfo, PgIndexInfo, PgViewInfo, PgFunctionInfo, ContextMenuAction } from '@/types/pgmanager'
+import PmContextMenu from './PmContextMenu.vue'
 
 const props = defineProps<{
   schemas: string[]
@@ -28,11 +29,85 @@ const emit = defineEmits<{
 
 const searchQuery = ref('')
 const expandedSchemas = ref<Set<string>>(new Set())
-const expandedSections = ref<Map<string, Set<string>>>(new Map()) // schema -> Set<'tables'|'views'|'indexes'|'functions'>
-const contextMenu = ref<{ x: number; y: number; items: any[]; visible: boolean }>({
-  x: 0, y: 0, items: [], visible: false,
-})
+const expandedSections = ref<Map<string, Set<string>>>(new Map())
 
+// ── Context menu ──────────────────────────────────────────────────
+const ctxMenu = ref({ visible: false, x: 0, y: 0, items: [] as { label: string; danger?: boolean; separator?: boolean }[] })
+const ctxActions = ref<(ContextMenuAction | null)[]>([])
+
+function openCtxMenu(e: MouseEvent, items: { label: string; danger?: boolean; separator?: boolean }[], actions: (ContextMenuAction | null)[]) {
+  ctxMenu.value = { visible: true, x: e.clientX, y: e.clientY, items }
+  ctxActions.value = actions
+}
+
+function onCtxMenuSelect(index: number) {
+  const action = ctxActions.value[index]
+  if (action) emit('contextMenu', action)
+  ctxMenu.value.visible = false
+}
+
+function showSchemaContextMenu(e: MouseEvent, schema: string) {
+  openCtxMenu(e,
+    [{ label: 'Create Table...' }, { separator: true, label: '' }, { label: 'Refresh' }],
+    [{ type: 'create-table', schema }, null, { type: 'refresh' }],
+  )
+}
+
+function showTableContextMenu(e: MouseEvent, schema: string, table: string) {
+  openCtxMenu(e, [
+    { label: 'SELECT *' },
+    { label: 'SELECT COUNT(*)' },
+    { separator: true, label: '' },
+    { label: 'Add Column...' },
+    { label: 'Rename Table...' },
+    { separator: true, label: '' },
+    { label: 'Export CSV' },
+    { label: 'Export JSON' },
+    { separator: true, label: '' },
+    { label: 'Drop Table', danger: true },
+  ], [
+    { type: 'select-star', schema, table },
+    { type: 'select-count', schema, table },
+    null,
+    { type: 'add-column', schema, table },
+    { type: 'rename-table', schema, table },
+    null,
+    { type: 'export-csv', schema, table },
+    { type: 'export-json', schema, table },
+    null,
+    { type: 'drop-table', schema, table },
+  ])
+}
+
+function showViewContextMenu(e: MouseEvent, schema: string, view: string) {
+  openCtxMenu(e, [
+    { label: 'SELECT *' },
+    { separator: true, label: '' },
+    { label: 'Drop View', danger: true },
+  ], [
+    { type: 'select-star', schema, table: view },
+    null,
+    { type: 'drop-view', schema, view },
+  ])
+}
+
+function showIndexContextMenu(e: MouseEvent, schema: string, index: string) {
+  openCtxMenu(e, [
+    { label: 'Drop Index', danger: true },
+  ], [
+    { type: 'drop-index', schema, index },
+  ])
+}
+
+function showFunctionContextMenu(e: MouseEvent, schema: string, func: string) {
+  openCtxMenu(e, [
+    { label: 'Drop Function', danger: true },
+  ], [
+    { type: 'drop-function', schema, func },
+  ])
+}
+
+// ── Tree logic ────────────────────────────────────────────────────
 function toggleSchema(schema: string) {
   if (expandedSchemas.value.has(schema)) {
     expandedSchemas.value.delete(schema)
@@ -86,22 +161,6 @@ function formatCount(n: number | null): string {
   return String(n)
 }
 
-function showTableContextMenu(e: MouseEvent, schema: string, table: string) {
-  emit('contextMenu', { type: 'select-star', schema, table })
-}
-
-function showViewContextMenu(e: MouseEvent, schema: string, view: string) {
-  emit('contextMenu', { type: 'drop-view', schema, view })
-}
-
-function showIndexContextMenu(e: MouseEvent, schema: string, index: string) {
-  emit('contextMenu', { type: 'drop-index', schema, index })
-}
-
-function showFunctionContextMenu(e: MouseEvent, schema: string, func: string) {
-  emit('contextMenu', { type: 'drop-function', schema, func })
-}
-
 function onToggleViewsSection(schema: string) {
   toggleSection(schema, 'views')
   if (isSectionExpanded(schema, 'views')) {
@@ -145,6 +204,7 @@ function onToggleFunctionsSection(schema: string) {
           class="tree-item tree-item--schema"
           :class="{ 'tree-item--expanded': expandedSchemas.has(schema) }"
           @click="toggleSchema(schema)"
+          @contextmenu.prevent="showSchemaContextMenu($event, schema)"
         >
           <span class="tree-arrow">{{ expandedSchemas.has(schema) ? '\u25BE' : '\u25B8' }}</span>
           <span class="tree-label">{{ schema }}</span>
@@ -262,6 +322,16 @@ function onToggleFunctionsSection(schema: string) {
         </div>
       </div>
     </div>
+
+    <!-- Context menu -->
+    <PmContextMenu
+      :items="ctxMenu.items"
+      :x="ctxMenu.x"
+      :y="ctxMenu.y"
+      :visible="ctxMenu.visible"
+      @select="onCtxMenuSelect"
+      @close="ctxMenu.visible = false"
+    />
 
     <!-- Column details panel when a table is selected -->
     <div v-if="selectedTable && columns.length" class="columns-panel">

@@ -1,23 +1,39 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
+import { save } from '@tauri-apps/plugin-dialog'
 import {
   PmButton, PmBadge, PmSelect, PmTable, PmSplitPane,
-  PmCodeEditor, PmConnectionModal,
+  PmConnectionModal,
 } from '@/components/ui'
 import type { ConnectionFormData } from '@/components/ui/PmConnectionModal.vue'
+import PmSqlEditor from '@/components/db/PmSqlEditor.vue'
+import PmQueryTabs from '@/components/db/PmQueryTabs.vue'
+import PmSchemaTree from '@/components/db/PmSchemaTree.vue'
+import PmExplainView from '@/components/db/PmExplainView.vue'
+import PmCreateTableModal from '@/components/db/PmCreateTableModal.vue'
+import PmAddColumnModal from '@/components/db/PmAddColumnModal.vue'
+import PmDropConfirmModal from '@/components/db/PmDropConfirmModal.vue'
 import { usePgManager } from '@/composables/usePgManager'
 import type { SaveConnectionParams, TestConnectionParams } from '@/composables/usePgManager'
+import type {
+  PgTableInfo, PgViewInfo, PgFunctionInfo, PgQueryResult, ContextMenuAction,
+} from '@/types/pgmanager'
 
 const {
   connections, activeConnectionId, activeConnection, isConnected,
-  schemas, tables, columns,
+  schemas, tables, columns, indexes, views, functions,
   queryResult, queryLoading, queryError,
   queryHistory, savedQueries,
-  loadConnections, saveConnection, testConnection,
+  tabs, activeTabId, activeTab,
+  loadConnections, saveConnection, deleteConnection, testConnection,
   connect, disconnect,
-  loadSchemas, loadTables, loadColumns,
+  loadSchemas, loadTables, loadColumns, loadIndexes, getRowCount,
   executeQuery,
   loadHistory, saveQuery, loadSavedQueries, deleteSavedQuery,
+  createTab, closeTab, setActiveTab,
+  loadViews, loadFunctions,
+  createTable, addColumn, dropObject, renameTable,
+  exportCsv, exportJson,
 } = usePgManager()
 
 // ── Connection toolbar ────────────────────────────────────────────────
@@ -97,52 +113,427 @@ async function onConnectionTest(data: ConnectionFormData) {
   }
 }
 
-// ── Schema tree ───────────────────────────────────────────────────────
-const expandedSchemas = ref<Set<string>>(new Set())
-const schemaTables = ref<Map<string, typeof tables.value>>(new Map())
-const loadingSchema = ref<string | null>(null)
+// ── Schema tree - accumulated state ──────────────────────────────────
+const selectedSchema = ref<string | null>(null)
 const selectedTable = ref<{ schema: string; table: string } | null>(null)
+const allTables = ref<PgTableInfo[]>([])
+const allViews = ref<PgViewInfo[]>([])
+const allFunctions = ref<PgFunctionInfo[]>([])
 
-async function toggleSchema(schema: string) {
-  if (expandedSchemas.value.has(schema)) {
-    expandedSchemas.value.delete(schema)
-    return
-  }
-  expandedSchemas.value.add(schema)
-  if (!schemaTables.value.has(schema)) {
-    loadingSchema.value = schema
-    try {
-      await loadTables(schema)
-      schemaTables.value.set(schema, [...tables.value])
-    } finally {
-      loadingSchema.value = null
-    }
-  }
+async function onSelectSchema(schema: string) {
+  selectedSchema.value = schema
+  await loadTables(schema)
+  // Accumulate: replace tables for this schema, keep others
+  allTables.value = [
+    ...allTables.value.filter(t => t.schema_name !== schema),
+    ...tables.value,
+  ]
 }
 
-function onTableClick(schema: string, table: string) {
+function onSelectTable(schema: string, table: string) {
   selectedTable.value = { schema, table }
   loadColumns(schema, table)
-  sqlText.value = `SELECT * FROM ${schema}.${table}`
+  loadIndexes(schema, table)
+}
+
+function onDoubleClickTable(schema: string, table: string) {
+  selectedTable.value = { schema, table }
+  if (activeTab.value) {
+    activeTab.value.sql = `SELECT * FROM "${schema}"."${table}"`
+  }
   runQuery()
+}
+
+async function onLoadViews(schema: string) {
+  await loadViews(schema)
+  allViews.value = [
+    ...allViews.value.filter(v => v.schema_name !== schema),
+    ...views.value,
+  ]
+}
+
+async function onLoadFunctions(schema: string) {
+  await loadFunctions(schema)
+  allFunctions.value = [
+    ...allFunctions.value.filter(f => f.schema_name !== schema),
+    ...functions.value,
+  ]
+}
+
+function onLoadColumns(schema: string, table: string) {
+  loadColumns(schema, table)
+}
+
+function onLoadIndexes(schema: string, table: string) {
+  loadIndexes(schema, table)
+}
+
+async function onRefreshTree() {
+  if (!isConnected.value) return
+  await loadSchemas()
+  allTables.value = []
+  allViews.value = []
+  allFunctions.value = []
+  selectedSchema.value = null
+  selectedTable.value = null
 }
 
 // Reset schema tree when connection changes
 watch(isConnected, (connected) => {
   if (!connected) {
-    expandedSchemas.value.clear()
-    schemaTables.value.clear()
+    selectedSchema.value = null
     selectedTable.value = null
+    allTables.value = []
+    allViews.value = []
+    allFunctions.value = []
   }
 })
 
-// ── Query editor ──────────────────────────────────────────────────────
-const sqlText = ref('')
+// ── Tab management ───────────────────────────────────────────────────
+function onTabSelect(tabId: string) {
+  setActiveTab(tabId)
+}
 
+function onTabClose(tabId: string) {
+  closeTab(tabId)
+}
+
+function onTabCreate() {
+  createTab()
+}
+
+function onTabRename(tabId: string, label: string) {
+  const tab = tabs.value.find(t => t.id === tabId)
+  if (tab) tab.label = label
+}
+
+// ── SQL editor binding ───────────────────────────────────────────────
+const sqlEditorRef = ref<InstanceType<typeof PmSqlEditor> | null>(null)
+
+const editorSql = computed({
+  get: () => activeTab.value?.sql ?? '',
+  set: (val: string) => {
+    if (activeTab.value) {
+      activeTab.value.sql = val
+    }
+  },
+})
+
+// Autocomplete data for the SQL editor
+const editorTableNames = computed(() =>
+  allTables.value.map(t => `${t.schema_name}.${t.table_name}`)
+)
+
+const editorColumnMap = computed(() => {
+  const map: Record<string, string[]> = {}
+  // Provide columns for the currently selected table
+  if (selectedTable.value) {
+    const key = `${selectedTable.value.schema}.${selectedTable.value.table}`
+    map[key] = columns.value.map(c => c.column_name)
+  }
+  return map
+})
+
+const editorSchemas = computed(() => schemas.value)
+
+// ── Query execution (per-tab) ────────────────────────────────────────
 async function runQuery() {
-  if (!sqlText.value.trim() || !isConnected.value) return
-  await executeQuery(sqlText.value.trim())
-  await loadHistory()
+  const tab = activeTab.value
+  if (!tab || !tab.sql.trim() || !isConnected.value) return
+
+  tab.loading = true
+  tab.error = null
+
+  try {
+    await executeQuery(tab.sql.trim())
+    tab.result = queryResult.value
+    tab.error = queryError.value
+  } catch (e) {
+    tab.error = String(e)
+    tab.result = null
+  } finally {
+    tab.loading = false
+    await loadHistory()
+  }
+}
+
+// ── EXPLAIN ──────────────────────────────────────────────────────────
+const explainPlan = ref<unknown>(null)
+const resultView = ref<'results' | 'explain'>('results')
+
+async function runExplain() {
+  const tab = activeTab.value
+  if (!tab || !tab.sql.trim() || !isConnected.value) return
+
+  tab.loading = true
+  tab.error = null
+
+  const explainSql = `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${tab.sql.trim()}`
+  try {
+    await executeQuery(explainSql)
+    if (queryResult.value && queryResult.value.rows.length > 0) {
+      const raw = queryResult.value.rows[0][0]
+      explainPlan.value = typeof raw === 'string' ? JSON.parse(raw) : raw
+      resultView.value = 'explain'
+    }
+    tab.error = queryError.value
+  } catch (e) {
+    tab.error = String(e)
+    explainPlan.value = null
+  } finally {
+    tab.loading = false
+    await loadHistory()
+  }
+}
+
+// ── Export ────────────────────────────────────────────────────────────
+const showExportMenu = ref(false)
+
+async function onExportCsv() {
+  showExportMenu.value = false
+  const tab = activeTab.value
+  if (!tab || !tab.sql.trim()) return
+
+  const filePath = await save({
+    filters: [{ name: 'CSV', extensions: ['csv'] }],
+    defaultPath: 'export.csv',
+  })
+  if (!filePath) return
+
+  try {
+    const count = await exportCsv(tab.sql.trim(), filePath)
+    tab.error = null
+    tab.result = {
+      columns: [],
+      rows: [],
+      total_rows: count,
+      affected_rows: null,
+      duration_ms: 0,
+      query_type: 'EXPORT',
+    }
+  } catch (e) {
+    if (activeTab.value) activeTab.value.error = String(e)
+  }
+}
+
+async function onExportJson() {
+  showExportMenu.value = false
+  const tab = activeTab.value
+  if (!tab || !tab.sql.trim()) return
+
+  const filePath = await save({
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    defaultPath: 'export.json',
+  })
+  if (!filePath) return
+
+  try {
+    const count = await exportJson(tab.sql.trim(), filePath)
+    tab.error = null
+    tab.result = {
+      columns: [],
+      rows: [],
+      total_rows: count,
+      affected_rows: null,
+      duration_ms: 0,
+      query_type: 'EXPORT',
+    }
+  } catch (e) {
+    if (activeTab.value) activeTab.value.error = String(e)
+  }
+}
+
+// ── Format ───────────────────────────────────────────────────────────
+function formatSql() {
+  sqlEditorRef.value?.formatSql()
+}
+
+// ── Context menu actions ─────────────────────────────────────────────
+const showCreateTableModal = ref(false)
+const createTableSchema = ref('')
+
+const showAddColumnModal = ref(false)
+const addColumnSchema = ref('')
+const addColumnTable = ref('')
+
+const showDropModal = ref(false)
+const dropObjectType = ref('')
+const dropSchema = ref('')
+const dropName = ref('')
+const dropRowCount = ref<number | undefined>(undefined)
+
+async function handleContextMenu(action: ContextMenuAction) {
+  switch (action.type) {
+    case 'select-star': {
+      if (activeTab.value) {
+        activeTab.value.sql = `SELECT * FROM "${action.schema}"."${action.table}"`
+      }
+      await runQuery()
+      break
+    }
+    case 'select-count': {
+      if (activeTab.value) {
+        activeTab.value.sql = `SELECT COUNT(*) FROM "${action.schema}"."${action.table}"`
+      }
+      await runQuery()
+      break
+    }
+    case 'drop-table': {
+      dropObjectType.value = 'TABLE'
+      dropSchema.value = action.schema
+      dropName.value = action.table
+      try {
+        dropRowCount.value = await getRowCount(action.schema, action.table)
+      } catch {
+        dropRowCount.value = undefined
+      }
+      showDropModal.value = true
+      break
+    }
+    case 'drop-view': {
+      dropObjectType.value = 'VIEW'
+      dropSchema.value = action.schema
+      dropName.value = action.view
+      dropRowCount.value = undefined
+      showDropModal.value = true
+      break
+    }
+    case 'drop-index': {
+      dropObjectType.value = 'INDEX'
+      dropSchema.value = action.schema
+      dropName.value = action.index
+      dropRowCount.value = undefined
+      showDropModal.value = true
+      break
+    }
+    case 'drop-function': {
+      dropObjectType.value = 'FUNCTION'
+      dropSchema.value = action.schema
+      dropName.value = action.func
+      dropRowCount.value = undefined
+      showDropModal.value = true
+      break
+    }
+    case 'export-csv': {
+      if (activeTab.value) {
+        activeTab.value.sql = `SELECT * FROM "${action.schema}"."${action.table}"`
+      }
+      await onExportCsv()
+      break
+    }
+    case 'export-json': {
+      if (activeTab.value) {
+        activeTab.value.sql = `SELECT * FROM "${action.schema}"."${action.table}"`
+      }
+      await onExportJson()
+      break
+    }
+    case 'create-table': {
+      createTableSchema.value = action.schema
+      showCreateTableModal.value = true
+      break
+    }
+    case 'add-column': {
+      addColumnSchema.value = action.schema
+      addColumnTable.value = action.table
+      showAddColumnModal.value = true
+      break
+    }
+    case 'rename-table': {
+      const newName = prompt(`Rename table "${action.table}" to:`, action.table)
+      if (newName && newName !== action.table) {
+        try {
+          await renameTable(action.schema, action.table, newName)
+          await onSelectSchema(action.schema)
+        } catch (e) {
+          if (activeTab.value) activeTab.value.error = String(e)
+        }
+      }
+      break
+    }
+    case 'refresh': {
+      await onRefreshTree()
+      break
+    }
+  }
+}
+
+// ── Modal handlers ───────────────────────────────────────────────────
+async function onCreateTable(
+  schema: string,
+  tableName: string,
+  cols: { name: string; data_type: string; is_primary_key: boolean; is_nullable: boolean; default_value: string | null }[],
+) {
+  try {
+    await createTable(schema, tableName, cols)
+    showCreateTableModal.value = false
+    await onSelectSchema(schema)
+  } catch (e) {
+    if (activeTab.value) activeTab.value.error = String(e)
+  }
+}
+
+async function onAddColumn(name: string, dataType: string, isNullable: boolean, defaultValue: string | null) {
+  try {
+    await addColumn(addColumnSchema.value, addColumnTable.value, name, dataType, isNullable, defaultValue ?? undefined)
+    showAddColumnModal.value = false
+    loadColumns(addColumnSchema.value, addColumnTable.value)
+  } catch (e) {
+    if (activeTab.value) activeTab.value.error = String(e)
+  }
+}
+
+async function onDropConfirm() {
+  try {
+    await dropObject(dropObjectType.value, dropSchema.value, dropName.value)
+    showDropModal.value = false
+    // Refresh the affected schema
+    await onSelectSchema(dropSchema.value)
+    if (dropObjectType.value === 'VIEW') {
+      await onLoadViews(dropSchema.value)
+    }
+  } catch (e) {
+    if (activeTab.value) activeTab.value.error = String(e)
+  }
+}
+
+// ── Results conversion (per-tab) ─────────────────────────────────────
+const tabResult = computed<PgQueryResult | null>(() => activeTab.value?.result ?? null)
+const tabError = computed<string | null>(() => activeTab.value?.error ?? null)
+const tabLoading = computed(() => activeTab.value?.loading ?? false)
+
+const tableColumns = computed(() =>
+  tabResult.value?.columns.map(c => ({ key: c.name, label: c.name, sortable: true })) ?? []
+)
+
+const tableData = computed(() => {
+  if (!tabResult.value) return []
+  return tabResult.value.rows.map((row, i) => {
+    const obj: Record<string, unknown> = { __rowIndex: i }
+    tabResult.value!.columns.forEach((col, j) => {
+      obj[col.name] = row[j]
+    })
+    return obj
+  })
+})
+
+const statsText = computed(() => {
+  if (!tabResult.value) return ''
+  const r = tabResult.value
+  if (r.query_type === 'EXPORT') {
+    return `Exported ${r.total_rows ?? 0} rows`
+  }
+  if (r.query_type === 'SELECT') {
+    return `${r.rows.length} rows${r.total_rows != null ? ` of ${r.total_rows}` : ''} in ${r.duration_ms}ms`
+  }
+  return `${r.affected_rows ?? 0} affected in ${r.duration_ms}ms`
+})
+
+function durationColorClass(ms: number | undefined): string {
+  if (ms === undefined) return ''
+  if (ms < 100) return 'duration--fast'
+  if (ms < 1000) return 'duration--medium'
+  return 'duration--slow'
 }
 
 // ── Save query ────────────────────────────────────────────────────────
@@ -155,8 +546,8 @@ function openSaveQuery() {
 }
 
 async function confirmSaveQuery() {
-  if (!saveLabel.value.trim()) return
-  await saveQuery(saveLabel.value.trim(), sqlText.value)
+  if (!saveLabel.value.trim() || !activeTab.value) return
+  await saveQuery(saveLabel.value.trim(), activeTab.value.sql)
   showSaveDialog.value = false
 }
 
@@ -164,7 +555,7 @@ async function confirmSaveQuery() {
 const showHistory = ref(false)
 
 function applyHistoryEntry(sql: string) {
-  sqlText.value = sql
+  if (activeTab.value) activeTab.value.sql = sql
   showHistory.value = false
 }
 
@@ -172,34 +563,9 @@ function applyHistoryEntry(sql: string) {
 const showSaved = ref(false)
 
 function applySavedQuery(sql: string) {
-  sqlText.value = sql
+  if (activeTab.value) activeTab.value.sql = sql
   showSaved.value = false
 }
-
-// ── Results conversion ────────────────────────────────────────────────
-const tableColumns = computed(() =>
-  queryResult.value?.columns.map(c => ({ key: c.name, label: c.name, sortable: true })) ?? []
-)
-
-const tableData = computed(() => {
-  if (!queryResult.value) return []
-  return queryResult.value.rows.map((row, i) => {
-    const obj: Record<string, unknown> = { __rowIndex: i }
-    queryResult.value!.columns.forEach((col, j) => {
-      obj[col.name] = row[j]
-    })
-    return obj
-  })
-})
-
-const statsText = computed(() => {
-  if (!queryResult.value) return ''
-  const r = queryResult.value
-  if (r.query_type === 'SELECT') {
-    return `${r.rows.length} rows${r.total_rows != null ? ` of ${r.total_rows}` : ''} in ${r.duration_ms}ms`
-  }
-  return `${r.affected_rows ?? 0} affected in ${r.duration_ms}ms`
-})
 
 // ── Inline editing ───────────────────────────────────────────────────
 const editingCell = ref<{ rowIdx: number; col: string } | null>(null)
@@ -259,11 +625,14 @@ function isCellModified(rowIdx: number, col: string): boolean {
 
 async function saveEdits() {
   if (!selectedTable.value || primaryKeys.value.length === 0) {
-    queryError.value = 'Cannot save: no primary key detected for this table'
+    if (activeTab.value) activeTab.value.error = 'Cannot save: no primary key detected for this table'
     return
   }
-  queryLoading.value = true
-  queryError.value = null
+  const tab = activeTab.value
+  if (!tab) return
+
+  tab.loading = true
+  tab.error = null
 
   try {
     for (const [rowIdx, colEdits] of pendingEdits.value) {
@@ -284,16 +653,21 @@ async function saveEdits() {
       const sql = `UPDATE "${selectedTable.value!.schema}"."${selectedTable.value!.table}" SET ${setClauses.join(', ')} WHERE ${whereClauses.join(' AND ')}`
       await executeQuery(sql)
 
-      if (queryError.value) break
+      if (queryError.value) {
+        tab.error = queryError.value
+        break
+      }
     }
 
-    if (!queryError.value) {
+    if (!tab.error) {
       pendingEdits.value = new Map()
-      sqlText.value = `SELECT * FROM "${selectedTable.value.schema}"."${selectedTable.value.table}"`
+      if (activeTab.value) {
+        activeTab.value.sql = `SELECT * FROM "${selectedTable.value.schema}"."${selectedTable.value.table}"`
+      }
       await runQuery()
     }
   } finally {
-    queryLoading.value = false
+    tab.loading = false
   }
 }
 
@@ -301,6 +675,21 @@ async function saveEdits() {
 watch(selectedTable, () => {
   pendingEdits.value = new Map()
   editingCell.value = null
+})
+
+// Reset result view when switching tabs
+watch(activeTabId, () => {
+  resultView.value = 'results'
+  explainPlan.value = null
+})
+
+// ── Status bar info ──────────────────────────────────────────────────
+const lastDuration = computed(() => tabResult.value?.duration_ms ?? undefined)
+
+const connectionInfo = computed(() => {
+  if (!activeConnection.value) return ''
+  const c = activeConnection.value
+  return `${c.database_name}@${c.host}:${c.port}`
 })
 </script>
 
@@ -327,7 +716,7 @@ watch(selectedTable, () => {
           {{ isConnected ? 'Disconnect' : 'Connect' }}
         </PmButton>
         <PmButton variant="ghost" size="sm" @click="openNewConnection">
-          New Connection
+          + New
         </PmButton>
       </div>
       <div class="db-toolbar__right">
@@ -343,217 +732,269 @@ watch(selectedTable, () => {
     <!-- Main split: schema tree | query area -->
     <PmSplitPane direction="horizontal" :initial-ratio="0.22" :min-size="180" storage-key="db-main">
       <template #first>
-        <div class="schema-panel">
-          <div class="schema-panel__header">
-            <span class="schema-panel__title">Schemas</span>
-          </div>
-          <div v-if="!isConnected" class="schema-panel__empty">
-            Connect to browse schemas
-          </div>
-          <div v-else-if="schemas.length === 0" class="schema-panel__empty">
-            No schemas found
-          </div>
-          <div v-else class="schema-tree">
-            <div v-for="schema in schemas" :key="schema" class="schema-tree__schema">
-              <div
-                class="schema-tree__item schema-tree__item--schema"
-                @click="toggleSchema(schema)"
-              >
-                <span class="schema-tree__toggle">
-                  {{ expandedSchemas.has(schema) ? '\u25BE' : '\u25B8' }}
-                </span>
-                <svg class="schema-tree__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M2 4h12v8a1 1 0 01-1 1H3a1 1 0 01-1-1V4z" />
-                  <path d="M2 4l2-2h4l2 2" />
-                </svg>
-                <span class="schema-tree__label">{{ schema }}</span>
-              </div>
-              <div v-if="expandedSchemas.has(schema)" class="schema-tree__children">
-                <div v-if="loadingSchema === schema" class="schema-tree__loading">
-                  Loading...
-                </div>
-                <template v-else-if="schemaTables.get(schema)?.length">
-                  <div
-                    v-for="t in schemaTables.get(schema)"
-                    :key="`${schema}.${t.table_name}`"
-                    class="schema-tree__item schema-tree__item--table"
-                    :class="{ 'schema-tree__item--selected': selectedTable?.schema === schema && selectedTable?.table === t.table_name }"
-                    @click="onTableClick(schema, t.table_name)"
-                  >
-                    <span class="schema-tree__spacer" />
-                    <svg class="schema-tree__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3">
-                      <rect x="2" y="2" width="12" height="12" rx="1" />
-                      <line x1="2" y1="6" x2="14" y2="6" />
-                      <line x1="2" y1="10" x2="14" y2="10" />
-                      <line x1="7" y1="6" x2="7" y2="14" />
-                    </svg>
-                    <span class="schema-tree__label">{{ t.table_name }}</span>
-                    <span v-if="t.estimated_rows != null" class="schema-tree__count">
-                      ~{{ t.estimated_rows }}
-                    </span>
-                  </div>
-                </template>
-                <div v-else class="schema-tree__loading">No tables</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Column info for selected table -->
-          <div v-if="selectedTable && columns.length > 0" class="column-panel">
-            <div class="column-panel__header">
-              {{ selectedTable.schema }}.{{ selectedTable.table }}
-            </div>
-            <div
-              v-for="col in columns"
-              :key="col.column_name"
-              class="column-panel__item"
-            >
-              <span class="column-panel__name" :class="{ 'column-panel__name--pk': col.is_primary_key }">
-                {{ col.is_primary_key ? '\u{1F511}' : '' }}{{ col.column_name }}
-              </span>
-              <span class="column-panel__type">{{ col.data_type }}</span>
-            </div>
-          </div>
-        </div>
+        <PmSchemaTree
+          :schemas="schemas"
+          :tables="allTables"
+          :columns="columns"
+          :indexes="indexes"
+          :views="allViews"
+          :functions="allFunctions"
+          :is-connected="isConnected"
+          :selected-schema="selectedSchema"
+          :selected-table="selectedTable"
+          @select-schema="onSelectSchema"
+          @select-table="onSelectTable"
+          @double-click-table="onDoubleClickTable"
+          @context-menu="handleContextMenu"
+          @refresh="onRefreshTree"
+          @load-views="onLoadViews"
+          @load-functions="onLoadFunctions"
+          @load-columns="onLoadColumns"
+          @load-indexes="onLoadIndexes"
+        />
       </template>
 
       <template #second>
-        <!-- Query area: editor | results -->
-        <PmSplitPane direction="vertical" :initial-ratio="0.4" :min-size="120" storage-key="db-query">
-          <template #first>
-            <div class="query-panel">
-              <div class="query-panel__toolbar">
-                <PmButton
-                  size="sm"
-                  :loading="queryLoading"
-                  :disabled="!isConnected || !sqlText.trim()"
-                  @click="runQuery"
-                >
-                  Run
-                </PmButton>
-                <PmButton
-                  variant="ghost"
-                  size="sm"
-                  :disabled="!sqlText.trim()"
-                  @click="openSaveQuery"
-                >
-                  Save
-                </PmButton>
+        <div class="query-area">
+          <!-- Tabs -->
+          <PmQueryTabs
+            :tabs="tabs"
+            :active-tab-id="activeTabId"
+            @select="onTabSelect"
+            @close="onTabClose"
+            @create="onTabCreate"
+            @rename="onTabRename"
+          />
 
-                <!-- Saved queries dropdown -->
-                <div class="dropdown-wrapper">
-                  <PmButton
-                    variant="ghost"
-                    size="sm"
-                    :disabled="savedQueries.length === 0"
-                    @click="showSaved = !showSaved"
-                  >
-                    Saved ({{ savedQueries.length }})
-                  </PmButton>
-                  <div v-if="showSaved" class="dropdown-menu" @mouseleave="showSaved = false">
-                    <div
-                      v-for="sq in savedQueries"
-                      :key="sq.id"
-                      class="dropdown-menu__item"
+          <!-- Query area: editor | results -->
+          <PmSplitPane direction="vertical" :initial-ratio="0.4" :min-size="120" storage-key="db-query">
+            <template #first>
+              <div class="query-panel">
+                <PmSqlEditor
+                  ref="sqlEditorRef"
+                  v-model="editorSql"
+                  :tables="editorTableNames"
+                  :columns="editorColumnMap"
+                  :schemas="editorSchemas"
+                  @execute="runQuery"
+                  @explain="runExplain"
+                  @save="openSaveQuery"
+                  @format="formatSql"
+                />
+              </div>
+            </template>
+
+            <template #second>
+              <div class="results-panel">
+                <!-- Query toolbar -->
+                <div class="query-toolbar">
+                  <div class="query-toolbar__left">
+                    <PmButton
+                      size="sm"
+                      :loading="tabLoading"
+                      :disabled="!isConnected || !editorSql.trim()"
+                      @click="runQuery"
                     >
-                      <button class="dropdown-menu__btn" @click="applySavedQuery(sq.sql_text)">
-                        {{ sq.label }}
-                      </button>
-                      <button class="dropdown-menu__delete" title="Delete" @click="deleteSavedQuery(sq.id)">
-                        &times;
-                      </button>
+                      Run
+                    </PmButton>
+                    <PmButton
+                      variant="ghost"
+                      size="sm"
+                      :disabled="!isConnected || !editorSql.trim()"
+                      @click="runExplain"
+                    >
+                      Explain
+                    </PmButton>
+
+                    <!-- Export dropdown -->
+                    <div class="dropdown-wrapper">
+                      <PmButton
+                        variant="ghost"
+                        size="sm"
+                        :disabled="!isConnected || !editorSql.trim()"
+                        @click="showExportMenu = !showExportMenu"
+                      >
+                        Export
+                      </PmButton>
+                      <div v-if="showExportMenu" class="dropdown-menu" @mouseleave="showExportMenu = false">
+                        <button class="dropdown-menu__btn" @click="onExportCsv">
+                          Export as CSV
+                        </button>
+                        <button class="dropdown-menu__btn" @click="onExportJson">
+                          Export as JSON
+                        </button>
+                      </div>
                     </div>
-                    <div v-if="savedQueries.length === 0" class="dropdown-menu__empty">
-                      No saved queries
+
+                    <PmButton
+                      variant="ghost"
+                      size="sm"
+                      :disabled="!editorSql.trim()"
+                      @click="formatSql"
+                    >
+                      Format
+                    </PmButton>
+                    <PmButton
+                      variant="ghost"
+                      size="sm"
+                      :disabled="!editorSql.trim()"
+                      @click="openSaveQuery"
+                    >
+                      Save
+                    </PmButton>
+
+                    <!-- Saved queries dropdown -->
+                    <div class="dropdown-wrapper">
+                      <PmButton
+                        variant="ghost"
+                        size="sm"
+                        :disabled="savedQueries.length === 0"
+                        @click="showSaved = !showSaved"
+                      >
+                        Saved ({{ savedQueries.length }})
+                      </PmButton>
+                      <div v-if="showSaved" class="dropdown-menu" @mouseleave="showSaved = false">
+                        <div
+                          v-for="sq in savedQueries"
+                          :key="sq.id"
+                          class="dropdown-menu__item"
+                        >
+                          <button class="dropdown-menu__btn" @click="applySavedQuery(sq.sql_text)">
+                            {{ sq.label }}
+                          </button>
+                          <button class="dropdown-menu__delete" title="Delete" @click="deleteSavedQuery(sq.id)">
+                            &times;
+                          </button>
+                        </div>
+                        <div v-if="savedQueries.length === 0" class="dropdown-menu__empty">
+                          No saved queries
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- History dropdown -->
+                    <div class="dropdown-wrapper">
+                      <PmButton
+                        variant="ghost"
+                        size="sm"
+                        :disabled="queryHistory.length === 0"
+                        @click="showHistory = !showHistory"
+                      >
+                        History ({{ queryHistory.length }})
+                      </PmButton>
+                      <div v-if="showHistory" class="dropdown-menu dropdown-menu--wide" @mouseleave="showHistory = false">
+                        <button
+                          v-for="h in queryHistory.slice(0, 20)"
+                          :key="h.id"
+                          class="dropdown-menu__btn"
+                          @click="applyHistoryEntry(h.sql_text)"
+                        >
+                          <span class="dropdown-menu__sql">{{ h.sql_text.slice(0, 80) }}{{ h.sql_text.length > 80 ? '...' : '' }}</span>
+                          <span class="dropdown-menu__meta">
+                            {{ h.duration_ms != null ? `${h.duration_ms}ms` : '' }}
+                            {{ h.error ? ' (error)' : '' }}
+                          </span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <!-- History dropdown -->
-                <div class="dropdown-wrapper">
-                  <PmButton
-                    variant="ghost"
-                    size="sm"
-                    :disabled="queryHistory.length === 0"
-                    @click="showHistory = !showHistory"
-                  >
-                    History ({{ queryHistory.length }})
-                  </PmButton>
-                  <div v-if="showHistory" class="dropdown-menu dropdown-menu--wide" @mouseleave="showHistory = false">
-                    <button
-                      v-for="h in queryHistory.slice(0, 20)"
-                      :key="h.id"
-                      class="dropdown-menu__btn"
-                      @click="applyHistoryEntry(h.sql_text)"
-                    >
-                      <span class="dropdown-menu__sql">{{ h.sql_text.slice(0, 80) }}{{ h.sql_text.length > 80 ? '...' : '' }}</span>
-                      <span class="dropdown-menu__meta">
-                        {{ h.duration_ms != null ? `${h.duration_ms}ms` : '' }}
-                        {{ h.error ? ' (error)' : '' }}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-
-                <span class="query-panel__hint">Ctrl+Enter to run</span>
-              </div>
-              <PmCodeEditor
-                v-model="sqlText"
-                placeholder="Enter SQL query..."
-                @execute="runQuery"
-              />
-            </div>
-          </template>
-
-          <template #second>
-            <div class="results-panel">
-              <!-- Stats bar -->
-              <div v-if="statsText || queryError" class="results-panel__stats">
-                <span v-if="queryError" class="results-panel__error">{{ queryError }}</span>
-                <span v-else class="results-panel__info">{{ statsText }}</span>
-              </div>
-
-              <!-- Edit toolbar -->
-              <div v-if="hasEdits" class="edit-toolbar">
-                <span class="edit-toolbar__count">{{ editCount }} modification(s)</span>
-                <PmButton size="sm" variant="ghost" @click="discardEdits">Discard</PmButton>
-                <PmButton size="sm" @click="saveEdits" :loading="queryLoading">Save</PmButton>
-              </div>
-
-              <!-- Results table -->
-              <div class="results-panel__table">
-                <PmTable
-                  :data="tableData"
-                  :columns="tableColumns"
-                  :loading="queryLoading"
-                  :page-size="100"
-                >
-                  <template v-for="col in tableColumns" :key="col.key" #[`cell-${col.key}`]="{ row, value }">
-                    <input
-                      v-if="editingCell?.rowIdx === row.__rowIndex && editingCell?.col === col.key"
-                      :value="editValue"
-                      @input="editValue = ($event.target as HTMLInputElement).value"
-                      @blur="commitEdit"
-                      @keydown.enter="commitEdit"
-                      @keydown.escape="cancelEdit"
-                      class="cell-edit-input"
-                    />
-                    <span
-                      v-else
-                      class="cell-display"
-                      :class="{ 'cell-display--modified': isCellModified(row.__rowIndex, col.key) }"
-                      @dblclick="startEdit(row.__rowIndex, col.key, value)"
-                    >
-                      {{ getCellValue(row.__rowIndex, col.key, value) }}
+                  <div class="query-toolbar__right">
+                    <span v-if="statsText" class="query-toolbar__stats" :class="durationColorClass(tabResult?.duration_ms)">
+                      {{ statsText }}
                     </span>
-                  </template>
-                </PmTable>
+                    <span class="query-toolbar__hint">Ctrl+Enter to run</span>
+                  </div>
+                </div>
+
+                <!-- Result / Explain toggle -->
+                <div v-if="explainPlan" class="result-tabs">
+                  <button
+                    class="result-tab"
+                    :class="{ 'result-tab--active': resultView === 'results' }"
+                    @click="resultView = 'results'"
+                  >
+                    Results
+                  </button>
+                  <button
+                    class="result-tab"
+                    :class="{ 'result-tab--active': resultView === 'explain' }"
+                    @click="resultView = 'explain'"
+                  >
+                    Explain
+                  </button>
+                </div>
+
+                <!-- Error bar -->
+                <div v-if="tabError" class="results-panel__error-bar">
+                  <span class="results-panel__error">{{ tabError }}</span>
+                </div>
+
+                <!-- Edit toolbar -->
+                <div v-if="hasEdits" class="edit-toolbar">
+                  <span class="edit-toolbar__count">{{ editCount }} modification(s)</span>
+                  <PmButton size="sm" variant="ghost" @click="discardEdits">Discard</PmButton>
+                  <PmButton size="sm" @click="saveEdits" :loading="tabLoading">Save</PmButton>
+                </div>
+
+                <!-- Explain view -->
+                <div v-if="resultView === 'explain' && explainPlan" class="results-panel__content">
+                  <PmExplainView :plan="explainPlan" />
+                </div>
+
+                <!-- Results table -->
+                <div v-else class="results-panel__table">
+                  <PmTable
+                    :data="tableData"
+                    :columns="tableColumns"
+                    :loading="tabLoading"
+                    :page-size="100"
+                  >
+                    <template v-for="col in tableColumns" :key="col.key" #[`cell-${col.key}`]="{ row, value }">
+                      <input
+                        v-if="editingCell?.rowIdx === row.__rowIndex && editingCell?.col === col.key"
+                        :value="editValue"
+                        @input="editValue = ($event.target as HTMLInputElement).value"
+                        @blur="commitEdit"
+                        @keydown.enter="commitEdit"
+                        @keydown.escape="cancelEdit"
+                        class="cell-edit-input"
+                      />
+                      <span
+                        v-else
+                        class="cell-display"
+                        :class="{ 'cell-display--modified': isCellModified(row.__rowIndex, col.key) }"
+                        @dblclick="startEdit(row.__rowIndex, col.key, value)"
+                      >
+                        {{ getCellValue(row.__rowIndex, col.key, value) }}
+                      </span>
+                    </template>
+                  </PmTable>
+                </div>
               </div>
-            </div>
-          </template>
-        </PmSplitPane>
+            </template>
+          </PmSplitPane>
+        </div>
       </template>
     </PmSplitPane>
+
+    <!-- Status bar -->
+    <div class="status-bar">
+      <div class="status-bar__left">
+        <span class="status-dot" :class="isConnected ? 'status-dot--connected' : 'status-dot--disconnected'" />
+        <span class="status-bar__label">{{ isConnected ? 'Connected' : 'Disconnected' }}</span>
+        <span v-if="isConnected && connectionInfo" class="status-bar__connection">{{ connectionInfo }}</span>
+      </div>
+      <div class="status-bar__right">
+        <span
+          v-if="lastDuration !== undefined"
+          class="status-bar__duration"
+          :class="durationColorClass(lastDuration)"
+        >
+          {{ lastDuration }}ms last query
+        </span>
+      </div>
+    </div>
 
     <!-- Save query dialog -->
     <div v-if="showSaveDialog" class="save-overlay" @click.self="showSaveDialog = false">
@@ -585,6 +1026,34 @@ watch(selectedTable, () => {
       @close="showConnectionModal = false"
       @save="onConnectionSave"
       @test="onConnectionTest"
+    />
+
+    <!-- Create table modal -->
+    <PmCreateTableModal
+      :visible="showCreateTableModal"
+      :schema="createTableSchema"
+      @close="showCreateTableModal = false"
+      @create="onCreateTable"
+    />
+
+    <!-- Add column modal -->
+    <PmAddColumnModal
+      :visible="showAddColumnModal"
+      :schema="addColumnSchema"
+      :table="addColumnTable"
+      @close="showAddColumnModal = false"
+      @add="onAddColumn"
+    />
+
+    <!-- Drop confirm modal -->
+    <PmDropConfirmModal
+      :visible="showDropModal"
+      :object-type="dropObjectType"
+      :schema="dropSchema"
+      :name="dropName"
+      :row-count="dropRowCount"
+      @close="showDropModal = false"
+      @confirm="onDropConfirm"
     />
   </div>
 </template>
@@ -631,154 +1100,12 @@ watch(selectedTable, () => {
   color: var(--pm-text-muted);
 }
 
-/* ── Schema panel ────────────────────────────────────────────────── */
-.schema-panel {
+/* ── Query area container ────────────────────────────────────────── */
+.query-area {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--pm-surface);
   overflow: hidden;
-}
-
-.schema-panel__header {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--pm-border-subtle);
-  flex-shrink: 0;
-}
-
-.schema-panel__title {
-  font-family: var(--pm-font-display);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--pm-text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.schema-panel__empty {
-  padding: 24px 12px;
-  color: var(--pm-text-muted);
-  font-size: 13px;
-  text-align: center;
-}
-
-.schema-tree {
-  flex: 1;
-  overflow-y: auto;
-  padding: 4px 0;
-}
-
-.schema-tree__item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 5px 8px;
-  cursor: pointer;
-  color: var(--pm-text-primary);
-  font-size: 13px;
-  font-family: var(--pm-font-body);
-  transition: background 0.1s;
-}
-
-.schema-tree__item:hover {
-  background: var(--pm-surface-hover);
-}
-
-.schema-tree__item--selected {
-  background: var(--pm-surface-hover);
-  color: var(--pm-accent);
-}
-
-.schema-tree__item--table {
-  padding-left: 24px;
-}
-
-.schema-tree__toggle {
-  width: 14px;
-  text-align: center;
-  font-size: 10px;
-  color: var(--pm-text-muted);
-  flex-shrink: 0;
-}
-
-.schema-tree__spacer {
-  width: 14px;
-  flex-shrink: 0;
-}
-
-.schema-tree__icon {
-  width: 14px;
-  height: 14px;
-  flex-shrink: 0;
-  opacity: 0.6;
-}
-
-.schema-tree__label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.schema-tree__count {
-  font-size: 10px;
-  color: var(--pm-text-muted);
-  font-family: var(--pm-font-mono);
-  flex-shrink: 0;
-}
-
-.schema-tree__loading {
-  padding: 6px 24px;
-  font-size: 12px;
-  color: var(--pm-text-muted);
-}
-
-.schema-tree__children {
-  /* no additional style needed */
-}
-
-/* ── Column panel ────────────────────────────────────────────────── */
-.column-panel {
-  border-top: 1px solid var(--pm-border);
-  flex-shrink: 0;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.column-panel__header {
-  padding: 8px 12px;
-  font-family: var(--pm-font-mono);
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--pm-text-secondary);
-  background: var(--pm-surface-elevated);
-  border-bottom: 1px solid var(--pm-border-subtle);
-  position: sticky;
-  top: 0;
-}
-
-.column-panel__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 3px 12px;
-  font-size: 12px;
-}
-
-.column-panel__name {
-  font-family: var(--pm-font-mono);
-  color: var(--pm-text-primary);
-}
-
-.column-panel__name--pk {
-  color: var(--pm-accent);
-}
-
-.column-panel__type {
-  font-family: var(--pm-font-mono);
-  color: var(--pm-text-muted);
-  font-size: 11px;
 }
 
 /* ── Query panel ─────────────────────────────────────────────────── */
@@ -789,9 +1116,18 @@ watch(selectedTable, () => {
   overflow: hidden;
 }
 
-.query-panel__toolbar {
+.query-panel :deep(.pm-sql-editor) {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  min-height: 0;
+}
+
+/* ── Query toolbar ───────────────────────────────────────────────── */
+.query-toolbar {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   padding: 6px 8px;
   background: var(--pm-surface);
@@ -799,19 +1135,107 @@ watch(selectedTable, () => {
   flex-shrink: 0;
 }
 
-.query-panel__hint {
-  margin-left: auto;
+.query-toolbar__left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.query-toolbar__right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.query-toolbar__stats {
+  font-family: var(--pm-font-mono);
+  font-size: 11px;
+  color: var(--pm-text-secondary);
+}
+
+.query-toolbar__hint {
   font-size: 11px;
   color: var(--pm-text-muted);
   font-family: var(--pm-font-mono);
 }
 
-.query-panel :deep(.pm-code-editor) {
+/* ── Duration color classes ──────────────────────────────────────── */
+.duration--fast {
+  color: var(--pm-success);
+}
+
+.duration--medium {
+  color: var(--pm-warning);
+}
+
+.duration--slow {
+  color: var(--pm-danger);
+}
+
+/* ── Result tabs ─────────────────────────────────────────────────── */
+.result-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--pm-border-subtle);
+  background: var(--pm-surface);
+  flex-shrink: 0;
+}
+
+.result-tab {
+  padding: 6px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--pm-text-muted);
+  font-size: 12px;
+  font-family: var(--pm-font-body);
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.result-tab:hover {
+  color: var(--pm-text-secondary);
+}
+
+.result-tab--active {
+  color: var(--pm-text-primary);
+  border-bottom-color: var(--pm-accent);
+}
+
+/* ── Results panel ───────────────────────────────────────────────── */
+.results-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.results-panel__error-bar {
+  padding: 6px 12px;
+  background: var(--pm-surface);
+  border-bottom: 1px solid var(--pm-border-subtle);
+  flex-shrink: 0;
+}
+
+.results-panel__error {
+  font-family: var(--pm-font-mono);
+  font-size: 12px;
+  color: var(--pm-danger);
+}
+
+.results-panel__content {
   flex: 1;
+  overflow: auto;
+}
+
+.results-panel__table {
+  flex: 1;
+  overflow: auto;
+}
+
+.results-panel__table :deep(.pm-table-wrapper) {
   border: none;
   border-radius: 0;
-  resize: none;
-  min-height: 0;
 }
 
 /* ── Dropdown ────────────────────────────────────────────────────── */
@@ -872,7 +1296,7 @@ watch(selectedTable, () => {
 }
 
 .dropdown-menu__delete:hover {
-  color: var(--pm-danger, #e55);
+  color: var(--pm-danger);
 }
 
 .dropdown-menu__sql {
@@ -896,42 +1320,6 @@ watch(selectedTable, () => {
   font-size: 12px;
 }
 
-/* ── Results panel ───────────────────────────────────────────────── */
-.results-panel {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  overflow: hidden;
-}
-
-.results-panel__stats {
-  padding: 6px 12px;
-  background: var(--pm-surface);
-  border-bottom: 1px solid var(--pm-border-subtle);
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
-.results-panel__info {
-  font-family: var(--pm-font-mono);
-  color: var(--pm-text-secondary);
-}
-
-.results-panel__error {
-  font-family: var(--pm-font-mono);
-  color: var(--pm-danger, #e55);
-}
-
-.results-panel__table {
-  flex: 1;
-  overflow: auto;
-}
-
-.results-panel__table :deep(.pm-table-wrapper) {
-  border: none;
-  border-radius: 0;
-}
-
 /* ── Edit toolbar ────────────────────────────────────────────────── */
 .edit-toolbar {
   display: flex;
@@ -942,6 +1330,7 @@ watch(selectedTable, () => {
   border-bottom: 1px solid var(--pm-accent);
   flex-shrink: 0;
 }
+
 .edit-toolbar__count {
   font-size: 12px;
   font-family: var(--pm-font-mono);
@@ -961,11 +1350,13 @@ watch(selectedTable, () => {
   font-size: 12px;
   outline: none;
 }
+
 .cell-display {
   cursor: default;
   display: block;
   min-height: 1em;
 }
+
 .cell-display--modified {
   color: var(--pm-accent);
   font-weight: 600;
@@ -1022,5 +1413,63 @@ watch(selectedTable, () => {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 12px;
+}
+
+/* ── Status bar ──────────────────────────────────────────────────── */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 16px;
+  background: var(--pm-surface);
+  border-top: 1px solid var(--pm-border);
+  flex-shrink: 0;
+  min-height: 24px;
+}
+
+.status-bar__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-bar__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot--connected {
+  background: var(--pm-success);
+  box-shadow: 0 0 6px var(--pm-success);
+}
+
+.status-dot--disconnected {
+  background: var(--pm-text-muted);
+}
+
+.status-bar__label {
+  font-size: 11px;
+  color: var(--pm-text-secondary);
+  font-family: var(--pm-font-body);
+}
+
+.status-bar__connection {
+  font-family: var(--pm-font-mono);
+  font-size: 11px;
+  color: var(--pm-text-muted);
+}
+
+.status-bar__duration {
+  font-family: var(--pm-font-mono);
+  font-size: 11px;
+  color: var(--pm-text-secondary);
 }
 </style>
