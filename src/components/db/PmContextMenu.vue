@@ -35,14 +35,15 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 watch(() => props.visible, (visible) => {
+  // Always clean up first to prevent listener accumulation
+  document.removeEventListener('mousedown', handleClickOutside)
+  document.removeEventListener('keydown', handleKeydown)
+
   if (visible) {
     nextTick(() => {
       document.addEventListener('mousedown', handleClickOutside)
       document.addEventListener('keydown', handleKeydown)
     })
-  } else {
-    document.removeEventListener('mousedown', handleClickOutside)
-    document.removeEventListener('keydown', handleKeydown)
   }
 })
 
