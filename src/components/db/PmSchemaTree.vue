@@ -154,6 +154,11 @@ function filteredFunctions(schema: string) {
   )
 }
 
+function filteredIndexes(schema: string) {
+  if (!props.selectedTable || props.selectedTable.schema !== schema) return []
+  return props.indexes
+}
+
 function formatCount(n: number | null): string {
   if (n === null) return '\u2014'
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -278,12 +283,12 @@ function onToggleFunctionsSection(schema: string) {
             >
               <span class="tree-arrow">{{ isSectionExpanded(schema, 'indexes') ? '\u25BE' : '\u25B8' }}</span>
               <span class="tree-label">Indexes</span>
-              <span class="tree-count">({{ indexes.length }})</span>
+              <span class="tree-count">({{ filteredIndexes(schema).length }})</span>
             </button>
 
             <div v-if="isSectionExpanded(schema, 'indexes')" class="section-contents">
               <button
-                v-for="idx in indexes"
+                v-for="idx in filteredIndexes(schema)"
                 :key="idx.index_name"
                 class="tree-item tree-item--leaf"
                 @contextmenu.prevent="showIndexContextMenu($event, schema, idx.index_name)"

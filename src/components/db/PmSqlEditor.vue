@@ -36,6 +36,7 @@ const { tables, columns, schemas } = toRefs(props)
 
 const editorRef = ref<HTMLDivElement>()
 let view: EditorView | null = null
+let isInternalUpdate = false
 const sqlCompartment = new Compartment()
 
 // ---------------------------------------------------------------------------
@@ -177,12 +178,14 @@ onBeforeUnmount(() => {
 
 // Sync external v-model changes into the editor
 watch(() => props.modelValue, (newVal) => {
-  if (!view) return
+  if (!view || isInternalUpdate) return
   const current = view.state.doc.toString()
   if (newVal !== current) {
+    isInternalUpdate = true
     view.dispatch({
       changes: { from: 0, to: current.length, insert: newVal },
     })
+    isInternalUpdate = false
   }
 })
 

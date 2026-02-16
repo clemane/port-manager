@@ -272,11 +272,16 @@ async function runExplain() {
   try {
     await executeQuery(explainSql)
     if (queryResult.value && queryResult.value.rows.length > 0) {
-      const raw = queryResult.value.rows[0][0]
-      explainPlan.value = typeof raw === 'string' ? JSON.parse(raw) : raw
-      resultView.value = 'explain'
+      try {
+        const raw = queryResult.value.rows[0][0]
+        explainPlan.value = typeof raw === 'string' ? JSON.parse(raw) : raw
+        resultView.value = 'explain'
+      } catch (parseError) {
+        tab.error = `Failed to parse EXPLAIN output: ${parseError}`
+        explainPlan.value = null
+      }
     }
-    tab.error = queryError.value
+    tab.error = tab.error ?? queryError.value
   } catch (e) {
     tab.error = String(e)
     explainPlan.value = null
@@ -596,6 +601,12 @@ function startEdit(rowIdx: number, col: string, currentValue: unknown) {
 function commitEdit() {
   if (!editingCell.value) return
   const { rowIdx, col } = editingCell.value
+
+  if (rowIdx >= tableData.value.length) {
+    editingCell.value = null
+    return
+  }
+
   const originalValue = String(tableData.value[rowIdx]?.[col] ?? '')
 
   if (editValue.value !== originalValue) {
