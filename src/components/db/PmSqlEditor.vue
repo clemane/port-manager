@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, toRefs } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import { sql, PostgreSQL } from '@codemirror/lang-sql'
@@ -31,8 +31,6 @@ const emit = defineEmits<{
   save: []
   format: []
 }>()
-
-const { tables, columns, schemas } = toRefs(props)
 
 const editorRef = ref<HTMLDivElement>()
 let view: EditorView | null = null

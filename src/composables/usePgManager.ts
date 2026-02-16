@@ -61,7 +61,7 @@ const tabs = ref<QueryTab[]>([{
   error: null,
   loading: false,
 }])
-const activeTabId = ref<string>(tabs.value[0].id)
+const activeTabId = ref<string>(tabs.value[0]!.id)
 const views = ref<PgViewInfo[]>([])
 const functions = ref<PgFunctionInfo[]>([])
 
@@ -260,7 +260,7 @@ export function usePgManager() {
     if (idx === -1 || tabs.value.length <= 1) return
     tabs.value.splice(idx, 1)
     if (activeTabId.value === tabId) {
-      activeTabId.value = tabs.value[Math.min(idx, tabs.value.length - 1)].id
+      activeTabId.value = tabs.value[Math.min(idx, tabs.value.length - 1)]!.id
     }
   }
 
