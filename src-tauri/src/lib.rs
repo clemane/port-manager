@@ -60,6 +60,8 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to get app data dir");
 
+            let vault_app_dir = app_dir.clone();
+
             let pool = tauri::async_runtime::block_on(db::init_db(app_dir))
                 .expect("failed to initialize database");
 
@@ -85,6 +87,12 @@ pub fn run() {
             app.manage(AppState {
                 db: pool,
                 pg_pools: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            });
+
+            let vault = vault_db::VaultDb::new(vault_app_dir);
+            app.manage(auth::VaultState {
+                vault,
+                session_key: std::sync::Mutex::new(None),
             });
 
             Ok(())
@@ -142,6 +150,17 @@ pub fn run() {
             pgmanager::pg_rename_table,
             pgmanager::pg_export_csv,
             pgmanager::pg_export_json,
+            auth::vault_status,
+            auth::create_master_password,
+            auth::login,
+            auth::lock_vault,
+            vault::list_vault_secrets,
+            vault::add_vault_secret,
+            vault::update_vault_secret,
+            vault::delete_vault_secret,
+            vault::activate_secret,
+            vault::deactivate_secret,
+            vault::deactivate_all_secrets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
