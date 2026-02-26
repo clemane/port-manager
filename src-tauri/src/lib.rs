@@ -1,6 +1,8 @@
+mod auth;
 mod crypto;
 mod db;
 mod favorites;
+mod file_activator;
 mod forward;
 mod k8s;
 mod kubeconfig;
