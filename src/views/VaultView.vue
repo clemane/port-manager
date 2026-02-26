@@ -30,7 +30,7 @@ const columns = [
 ]
 
 const filteredSecrets = computed(() => {
-  let result = secrets.value
+  let result = [...secrets.value]
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
     result = result.filter(s =>
