@@ -10,6 +10,7 @@ mod ngrok;
 mod pgmanager;
 mod ports;
 mod settings;
+mod vault;
 mod vault_db;
 
 use std::collections::HashMap;
