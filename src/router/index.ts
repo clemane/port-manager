@@ -8,6 +8,8 @@ const router = createRouter({
     { path: '/forwards', name: 'forwards', component: () => import('../views/ForwardsView.vue'), meta: { title: 'Port Forwards' } },
     { path: '/ngrok', name: 'ngrok', component: () => import('../views/NgrokView.vue'), meta: { title: 'Ngrok Tunnels' } },
     { path: '/database', name: 'database', component: () => import('../views/DatabaseView.vue'), meta: { title: 'Database' } },
+    { path: '/vault', name: 'vault', component: () => import('../views/VaultView.vue'), meta: { title: 'Vault' } },
+    { path: '/login', name: 'login', component: () => import('../views/LoginView.vue'), meta: { title: 'Login', public: true } },
     { path: '/settings', name: 'settings', component: () => import('../views/SettingsView.vue'), meta: { title: 'Settings' } },
   ],
 })
