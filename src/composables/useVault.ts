@@ -34,7 +34,7 @@ async function addSecret(name: string, category: string, content: string, filePa
     await invoke('add_vault_secret', {
       name,
       category,
-      content,
+      content: Array.from(new TextEncoder().encode(content)),
       filePath: filePath ?? null,
       notes: notes ?? null,
     })
@@ -51,7 +51,7 @@ async function updateSecret(id: string, updates: { name?: string; category?: str
       id,
       name: updates.name ?? null,
       category: updates.category ?? null,
-      content: updates.content ?? null,
+      content: updates.content ? Array.from(new TextEncoder().encode(updates.content)) : null,
       filePath: updates.filePath ?? null,
       notes: updates.notes ?? null,
     })
