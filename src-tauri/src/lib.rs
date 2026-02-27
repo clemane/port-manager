@@ -95,9 +95,18 @@ pub fn run() {
                 session_key: std::sync::Mutex::new(None),
             });
 
+            // Set window icon from embedded PNG
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png")) {
+                    let _ = window.set_icon(icon);
+                }
+            }
+
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_system_ports,
             read_file_content,
@@ -154,6 +163,7 @@ pub fn run() {
             auth::create_master_password,
             auth::login,
             auth::lock_vault,
+            auth::recover_vault,
             vault::list_vault_secrets,
             vault::add_vault_secret,
             vault::update_vault_secret,
