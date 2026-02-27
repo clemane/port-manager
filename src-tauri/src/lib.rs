@@ -1,6 +1,8 @@
+mod auth;
 mod crypto;
 mod db;
 mod favorites;
+mod file_activator;
 mod forward;
 mod k8s;
 mod kubeconfig;
@@ -8,6 +10,8 @@ mod ngrok;
 mod pgmanager;
 mod ports;
 mod settings;
+mod vault;
+mod vault_db;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -56,6 +60,8 @@ pub fn run() {
                 .app_data_dir()
                 .expect("failed to get app data dir");
 
+            let vault_app_dir = app_dir.clone();
+
             let pool = tauri::async_runtime::block_on(db::init_db(app_dir))
                 .expect("failed to initialize database");
 
@@ -83,9 +89,24 @@ pub fn run() {
                 pg_pools: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             });
 
+            let vault = vault_db::VaultDb::new(vault_app_dir);
+            app.manage(auth::VaultState {
+                vault,
+                session_key: std::sync::Mutex::new(None),
+            });
+
+            // Set window icon from embedded PNG
+            if let Some(window) = app.get_webview_window("main") {
+                if let Ok(icon) = tauri::image::Image::from_bytes(include_bytes!("../icons/128x128.png")) {
+                    let _ = window.set_icon(icon);
+                }
+            }
+
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             get_system_ports,
             read_file_content,
@@ -138,6 +159,18 @@ pub fn run() {
             pgmanager::pg_rename_table,
             pgmanager::pg_export_csv,
             pgmanager::pg_export_json,
+            auth::vault_status,
+            auth::create_master_password,
+            auth::login,
+            auth::lock_vault,
+            auth::recover_vault,
+            vault::list_vault_secrets,
+            vault::add_vault_secret,
+            vault::update_vault_secret,
+            vault::delete_vault_secret,
+            vault::activate_secret,
+            vault::deactivate_secret,
+            vault::deactivate_all_secrets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

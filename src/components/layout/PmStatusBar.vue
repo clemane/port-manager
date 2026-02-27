@@ -5,6 +5,12 @@ defineProps<{
   forwardCount: number
   listeningPorts: number
   tunnelCount: number
+  updateAvailable?: boolean
+  newVersion?: string
+}>()
+
+defineEmits<{
+  showUpdate: []
 }>()
 </script>
 
@@ -24,6 +30,14 @@ defineProps<{
       </router-link>
     </div>
     <div class="status-bar__right">
+      <button
+        v-if="updateAvailable"
+        class="status-item status-item--update"
+        @click="$emit('showUpdate')"
+      >
+        <PmStatusDot status="running" :size="5" />
+        <span>v{{ newVersion }} available</span>
+      </button>
       <span class="status-item">
         <PmStatusDot status="running" :size="5" />
         <span>Connected</span>
@@ -67,5 +81,19 @@ defineProps<{
 }
 .status-item--link:hover {
   color: var(--pm-text-secondary);
+}
+.status-item--update {
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--pm-accent);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: color 0.15s;
+}
+.status-item--update:hover {
+  color: var(--pm-accent-hover);
 }
 </style>

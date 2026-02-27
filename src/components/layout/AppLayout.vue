@@ -11,10 +11,13 @@ defineProps<{
   forwardCount: number
   listeningPorts: number
   tunnelCount?: number
+  updateAvailable?: boolean
+  newVersion?: string
 }>()
 
 defineEmits<{
   themeChange: [theme: string]
+  showUpdate: []
 }>()
 </script>
 
@@ -42,6 +45,9 @@ defineEmits<{
         :forward-count="forwardCount"
         :listening-ports="listeningPorts"
         :tunnel-count="tunnelCount ?? 0"
+        :update-available="updateAvailable"
+        :new-version="newVersion"
+        @show-update="$emit('showUpdate')"
       />
     </div>
     <PmToastContainer />

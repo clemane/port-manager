@@ -36,6 +36,7 @@ const navItems = [
   { path: '/forwards', label: 'Forwards', icon: 'forwards' },
   { path: '/ngrok', label: 'Ngrok', icon: 'ngrok' },
   { path: '/database', label: 'Database', icon: 'database' },
+  { path: '/vault', label: 'Vault', icon: 'vault' },
   { path: '/settings', label: 'Settings', icon: 'settings' },
 ]
 
@@ -99,6 +100,12 @@ const themes = [
             <ellipse cx="10" cy="5" rx="7" ry="3" />
             <path d="M3 5v10c0 1.66 3.13 3 7 3s7-1.34 7-3V5" />
             <path d="M3 10c0 1.66 3.13 3 7 3s7-1.34 7-3" />
+          </svg>
+          <!-- Vault -->
+          <svg v-else-if="item.icon === 'vault'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="9" width="14" height="9" rx="2" />
+            <path d="M6 9V6a4 4 0 018 0v3" />
+            <circle cx="10" cy="14" r="1.5" />
           </svg>
           <!-- Settings -->
           <svg v-else-if="item.icon === 'settings'" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
