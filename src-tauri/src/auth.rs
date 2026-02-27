@@ -47,19 +47,28 @@ pub fn create_master_password(
     // 2. Hash the password for verification storage
     let password_hash = crypto::hash_password(&password)?;
 
-    // 3. Generate and hash the recovery key
+    // 3. Generate recovery key
     let recovery_key = crypto::generate_recovery_key();
     let recovery_hash = crypto::hash_password(&recovery_key)?;
 
-    // 4. Write salt file (needed before we can open the DB later)
+    // 4. Encrypt the SQLCipher key with the recovery key (for recovery flow)
+    let recovery_salt = crypto::generate_salt();
+    let recovery_enc_key = crypto::derive_key(recovery_key.as_bytes(), &recovery_salt)?;
+    let encrypted_db_key = crypto::encrypt(derived_hex.as_bytes(), &recovery_enc_key)?;
+
+    // 5. Write salt file (needed before we can open the DB later)
     state.vault.write_salt(&salt)?;
 
-    // 5. Create the encrypted vault database
+    // 6. Write recovery file (outside encrypted DB)
+    let recovery_verify_hash = crypto::hash_password(&recovery_key)?;
+    state.vault.write_recovery(&recovery_salt, &recovery_verify_hash, &encrypted_db_key)?;
+
+    // 7. Create the encrypted vault database
     state
         .vault
         .create(&password_hash, &recovery_hash, &salt, &derived_hex)?;
 
-    // 6. Store the session key so the vault is "unlocked"
+    // 8. Store the session key so the vault is "unlocked"
     let mut session = state
         .session_key
         .lock()
@@ -93,6 +102,38 @@ pub fn login(password: String, state: tauri::State<'_, VaultState>) -> Result<bo
         }
         Err(_) => Ok(false),
     }
+}
+
+/// Recover the vault using the recovery key.
+///
+/// Verifies the recovery key, decrypts the stored DB key, and unlocks the vault.
+#[tauri::command]
+pub fn recover_vault(
+    recovery_key: String,
+    state: tauri::State<'_, VaultState>,
+) -> Result<bool, String> {
+    // 1. Read recovery data
+    let (recovery_salt, recovery_hash, encrypted_db_key) = state.vault.read_recovery()?;
+
+    // 2. Verify the recovery key
+    if !crypto::verify_password(&recovery_key, &recovery_hash)? {
+        return Ok(false);
+    }
+
+    // 3. Derive the recovery encryption key and decrypt the DB key
+    let recovery_enc_key = crypto::derive_key(recovery_key.as_bytes(), &recovery_salt)?;
+    let db_key_bytes = crypto::decrypt(&encrypted_db_key, &recovery_enc_key)?;
+    let derived_hex = String::from_utf8(db_key_bytes)
+        .map_err(|_| "Failed to decode DB key".to_string())?;
+
+    // 4. Open the vault
+    state.vault.open(&derived_hex)?;
+
+    // 5. Store session key
+    let mut session = state.session_key.lock().map_err(|e| format!("Lock error: {e}"))?;
+    *session = Some(derived_hex);
+
+    Ok(true)
 }
 
 /// Lock the vault: securely delete all active secret files and close the DB.

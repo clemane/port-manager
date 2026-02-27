@@ -3,12 +3,14 @@ import { ref, computed } from 'vue'
 import { PmButton, PmInput } from '@/components/ui'
 import { useAuth } from '@/composables/useAuth'
 
-const { vaultExists, loading, error, recoveryKey, createPassword, login } = useAuth()
+const { vaultExists, loading, error, recoveryKey, createPassword, confirmVaultCreation, login, recoverWithKey } = useAuth()
 
 const password = ref('')
 const confirmPassword = ref('')
+const recoveryInput = ref('')
 const showRecoveryKey = ref(false)
 const copiedKey = ref(false)
+const showRecoveryForm = ref(false)
 
 const passwordMismatch = computed(() => {
   return confirmPassword.value.length > 0 && password.value !== confirmPassword.value
@@ -54,6 +56,22 @@ async function copyRecoveryKey() {
 
 function dismissRecoveryKey() {
   showRecoveryKey.value = false
+  confirmVaultCreation()
+}
+
+async function handleRecover() {
+  if (!recoveryInput.value.trim()) return
+  await recoverWithKey(recoveryInput.value.trim())
+}
+
+function showRecovery() {
+  showRecoveryForm.value = true
+  password.value = ''
+}
+
+function backToLogin() {
+  showRecoveryForm.value = false
+  recoveryInput.value = ''
 }
 </script>
 
@@ -99,6 +117,18 @@ function dismissRecoveryKey() {
         <PmButton :disabled="!canCreate" :loading="loading" size="lg" @click="handleCreate">Create Vault</PmButton>
       </div>
 
+      <!-- Recovery Form -->
+      <div v-else-if="showRecoveryForm" class="login__form">
+        <p class="login__desc">Enter your recovery key to unlock the vault.</p>
+        <label class="form-label">
+          Recovery Key
+          <PmInput v-model="recoveryInput" type="text" placeholder="word1-word2-word3-..." />
+        </label>
+        <p v-if="error" class="form-error">{{ error }}</p>
+        <PmButton :disabled="!recoveryInput.trim()" :loading="loading" size="lg" @click="handleRecover">Recover</PmButton>
+        <button class="login__forgot" @click="backToLogin">Back to login</button>
+      </div>
+
       <!-- Login Form (vault exists) -->
       <div v-else class="login__form">
         <p class="login__desc">Enter your master password to unlock the vault.</p>
@@ -108,6 +138,7 @@ function dismissRecoveryKey() {
         </label>
         <p v-if="error" class="form-error">{{ error }}</p>
         <PmButton :disabled="!canLogin" :loading="loading" size="lg" @click="handleLogin">Unlock</PmButton>
+        <button class="login__forgot" @click="showRecovery">Forgot password?</button>
       </div>
     </div>
   </div>
@@ -231,5 +262,20 @@ function dismissRecoveryKey() {
 
 .recovery__copy:hover {
   color: var(--pm-text-primary);
+}
+
+.login__forgot {
+  background: none;
+  border: none;
+  color: var(--pm-text-muted);
+  font-family: var(--pm-font-body);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  transition: color 0.15s;
+  padding: 0;
+}
+.login__forgot:hover {
+  color: var(--pm-text-secondary);
 }
 </style>

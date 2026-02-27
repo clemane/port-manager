@@ -165,10 +165,77 @@ impl VaultDb {
         fs::read(&salt_path).map_err(|e| format!("Failed to read salt file: {e}"))
     }
 
+    /// Write recovery data to `vault.recovery` (unencrypted file).
+    ///
+    /// Format: recovery_salt (16) || recovery_hash (48) || encrypted_db_key (variable)
+    pub fn write_recovery(
+        &self,
+        recovery_salt: &[u8],
+        recovery_hash: &[u8],
+        encrypted_db_key: &[u8],
+    ) -> Result<(), String> {
+        let recovery_path = self.recovery_path();
+        let mut data = Vec::new();
+        data.extend_from_slice(recovery_salt);   // 16 bytes
+        data.extend_from_slice(recovery_hash);   // 48 bytes
+        data.extend_from_slice(encrypted_db_key); // variable
+        fs::write(&recovery_path, &data)
+            .map_err(|e| format!("Failed to write recovery file: {e}"))
+    }
+
+    /// Read recovery data from `vault.recovery`.
+    ///
+    /// Returns (recovery_salt, recovery_hash, encrypted_db_key).
+    pub fn read_recovery(&self) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), String> {
+        let recovery_path = self.recovery_path();
+        let data = fs::read(&recovery_path)
+            .map_err(|e| format!("Failed to read recovery file: {e}"))?;
+        if data.len() < 64 {
+            return Err("Recovery file is corrupted".to_string());
+        }
+        let recovery_salt = data[..16].to_vec();
+        let recovery_hash = data[16..64].to_vec();
+        let encrypted_db_key = data[64..].to_vec();
+        Ok((recovery_salt, recovery_hash, encrypted_db_key))
+    }
+
+    /// Destroy the vault: close the connection, delete vault.db and vault.salt.
+    pub fn destroy(&self) -> Result<(), String> {
+        // Close connection if open
+        let mut guard = self.conn.lock().map_err(|e| format!("Lock error: {e}"))?;
+        *guard = None;
+
+        // Delete vault.db
+        if self.db_path.exists() {
+            fs::remove_file(&self.db_path)
+                .map_err(|e| format!("Failed to delete vault.db: {e}"))?;
+        }
+
+        // Delete vault.salt
+        let salt_path = self.salt_path();
+        if salt_path.exists() {
+            fs::remove_file(&salt_path)
+                .map_err(|e| format!("Failed to delete vault.salt: {e}"))?;
+        }
+
+        // Delete vault.recovery
+        let recovery_path = self.recovery_path();
+        if recovery_path.exists() {
+            fs::remove_file(&recovery_path)
+                .map_err(|e| format!("Failed to delete vault.recovery: {e}"))?;
+        }
+
+        Ok(())
+    }
+
     // ── Private helpers ────────────────────────────────────────────────
 
     fn salt_path(&self) -> PathBuf {
         self.db_path.with_file_name("vault.salt")
+    }
+
+    fn recovery_path(&self) -> PathBuf {
+        self.db_path.with_file_name("vault.recovery")
     }
 
     fn run_migrations(conn: &Connection) -> Result<(), String> {

@@ -46,9 +46,7 @@ async function createPassword(password: string): Promise<string | null> {
   try {
     const key = await invoke<string>('create_master_password', { password })
     recoveryKey.value = key
-    isUnlocked.value = true
     vaultExists.value = true
-    startInactivityTimer()
     return key
   } catch (e) {
     error.value = `Failed to create vault: ${e}`
@@ -56,6 +54,11 @@ async function createPassword(password: string): Promise<string | null> {
   } finally {
     loading.value = false
   }
+}
+
+function confirmVaultCreation() {
+  isUnlocked.value = true
+  startInactivityTimer()
 }
 
 async function login(password: string): Promise<boolean> {
@@ -72,6 +75,26 @@ async function login(password: string): Promise<boolean> {
     return success
   } catch (e) {
     error.value = `Login failed: ${e}`
+    return false
+  } finally {
+    loading.value = false
+  }
+}
+
+async function recoverWithKey(recoveryKeyInput: string): Promise<boolean> {
+  loading.value = true
+  error.value = null
+  try {
+    const success = await invoke<boolean>('recover_vault', { recoveryKey: recoveryKeyInput })
+    if (success) {
+      isUnlocked.value = true
+      startInactivityTimer()
+    } else {
+      error.value = 'Invalid recovery key'
+    }
+    return success
+  } catch (e) {
+    error.value = `Recovery failed: ${e}`
     return false
   } finally {
     loading.value = false
@@ -97,7 +120,9 @@ export function useAuth() {
     recoveryKey: readonly(recoveryKey),
     checkStatus,
     createPassword,
+    confirmVaultCreation,
     login,
+    recoverWithKey,
     lock,
     resetActivity,
   }
