@@ -149,7 +149,7 @@ pub async fn pg_save_connection(
     color: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<PgConnection, String> {
-    let key = crate::crypto::get_encryption_key()?;
+    let key = crate::crypto::get_or_create_encryption_key()?;
 
     // Determine if this is an update or insert
     let conn_id = if let Some(ref existing_id) = id {
@@ -164,7 +164,7 @@ pub async fn pg_save_connection(
         if exists.is_some() {
             // UPDATE existing connection
             if let Some(ref pw) = password {
-                let encrypted = crate::crypto::encrypt_decrypt(pw.as_bytes(), &key);
+                let encrypted = crate::crypto::secure_encrypt(pw.as_bytes(), &key)?;
                 sqlx::query(
                     "UPDATE pg_connections SET label = ?, forward_id = ?, favorite_id = ?, host = ?, port = ?, database_name = ?, username = ?, password = ?, ssl_mode = ?, color = ? WHERE id = ?"
                 )
@@ -207,7 +207,8 @@ pub async fn pg_save_connection(
             // ID provided but doesn't exist — insert with this ID
             let encrypted = password
                 .as_ref()
-                .map(|pw| crate::crypto::encrypt_decrypt(pw.as_bytes(), &key));
+                .map(|pw| crate::crypto::secure_encrypt(pw.as_bytes(), &key))
+                .transpose()?;
 
             sqlx::query(
                 "INSERT INTO pg_connections (id, label, forward_id, favorite_id, host, port, database_name, username, password, ssl_mode, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -234,7 +235,8 @@ pub async fn pg_save_connection(
         let new_id = uuid::Uuid::new_v4().to_string();
         let encrypted = password
             .as_ref()
-            .map(|pw| crate::crypto::encrypt_decrypt(pw.as_bytes(), &key));
+            .map(|pw| crate::crypto::secure_encrypt(pw.as_bytes(), &key))
+            .transpose()?;
 
         sqlx::query(
             "INSERT INTO pg_connections (id, label, forward_id, favorite_id, host, port, database_name, username, password, ssl_mode, color) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
@@ -369,9 +371,26 @@ pub async fn pg_connect(
     // Decrypt password
     let password = if let Some(ref encrypted) = conn.password {
         let key = crate::crypto::get_encryption_key()?;
-        let decrypted = crate::crypto::encrypt_decrypt(encrypted, &key);
-        String::from_utf8(decrypted)
-            .map_err(|e| format!("Failed to decode password: {e}"))?
+        let (decrypted, needs_migration) = crate::crypto::secure_decrypt(encrypted, &key)?;
+        let pw = String::from_utf8(decrypted)
+            .map_err(|_| {
+                "Failed to decode password. The encryption key may have changed — \
+                 please re-save this connection's credentials."
+                    .to_string()
+            })?;
+
+        // Transparently migrate legacy XOR data to AES-256-GCM
+        if needs_migration {
+            if let Ok(re_encrypted) = crate::crypto::secure_encrypt(pw.as_bytes(), &key) {
+                let _ = sqlx::query("UPDATE pg_connections SET password = ? WHERE id = ?")
+                    .bind(&re_encrypted)
+                    .bind(&id)
+                    .execute(&state.db)
+                    .await;
+            }
+        }
+
+        pw
     } else {
         String::new()
     };

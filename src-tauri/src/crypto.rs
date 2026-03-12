@@ -24,6 +24,24 @@ pub fn derive_key(password: &[u8], salt: &[u8]) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
+/// Derive a 32-byte AES key from a legacy UUID keyring key.
+///
+/// Uses Argon2id with light params (16 MiB, 1 iteration) since the input
+/// is already high-entropy random material (UUID v4).
+pub fn derive_aes_key(uuid_key: &[u8]) -> Result<[u8; 32], String> {
+    let salt = b"port-manager-aes"; // fixed 16-byte salt
+    let params = Params::new(16384, 1, 1, Some(32))
+        .map_err(|e| format!("Argon2 params error: {e}"))?;
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
+    let mut key = [0u8; 32];
+    argon2
+        .hash_password_into(uuid_key, salt, &mut key)
+        .map_err(|e| format!("Key derivation error: {e}"))?;
+
+    Ok(key)
+}
+
 /// Generate a random 16-byte salt.
 pub fn generate_salt() -> [u8; 16] {
     let mut salt = [0u8; 16];
@@ -152,16 +170,68 @@ pub fn legacy_get_encryption_key() -> Result<Vec<u8>, String> {
     }
 }
 
-// ── Backward-compatible wrappers (used by kubeconfig.rs, pgmanager.rs) ──
+// ── Secure wrappers (used by kubeconfig.rs, pgmanager.rs) ───────────────
 
-/// Thin wrapper that delegates to the legacy keyring implementation.
+/// Retrieve the encryption key from the keyring.
+///
+/// **Does NOT auto-generate** a new key if none exists — returns an error
+/// instead. This prevents silent data corruption when the keyring is cleared
+/// and a new key would fail to decrypt existing data.
+///
+/// Use [`get_or_create_encryption_key`] for operations that store new data.
 pub fn get_encryption_key() -> Result<Vec<u8>, String> {
+    let entry = keyring::Entry::new("port-manager", "encryption-key")
+        .map_err(|e| format!("Failed to create keyring entry: {e}"))?;
+
+    match entry.get_password() {
+        Ok(key) => Ok(key.into_bytes()),
+        Err(keyring::Error::NoEntry) => Err(
+            "No encryption key found in keyring. Your stored data cannot be decrypted. \
+             Please re-import your kubeconfigs and credentials."
+                .to_string(),
+        ),
+        Err(e) => Err(format!(
+            "Failed to retrieve encryption key from keyring: {e}"
+        )),
+    }
+}
+
+/// Retrieve or create the encryption key.
+///
+/// Creates a new UUID key in the keyring if none exists. Use this for
+/// operations that store **new** data (import, save).
+pub fn get_or_create_encryption_key() -> Result<Vec<u8>, String> {
     legacy_get_encryption_key()
 }
 
-/// Thin wrapper that delegates to the legacy XOR implementation.
-pub fn encrypt_decrypt(data: &[u8], key: &[u8]) -> Vec<u8> {
-    legacy_encrypt_decrypt(data, key)
+/// Encrypt data using AES-256-GCM with a key derived from the UUID keyring key.
+///
+/// Returns encrypted bytes suitable for storage.
+pub fn secure_encrypt(data: &[u8], uuid_key: &[u8]) -> Result<Vec<u8>, String> {
+    let aes_key = derive_aes_key(uuid_key)?;
+    encrypt(data, &aes_key)
+}
+
+/// Decrypt data, trying AES-256-GCM first, then falling back to legacy XOR.
+///
+/// Returns `(plaintext, needs_migration)`:
+/// - `needs_migration = false`: data was AES-encrypted (current format)
+/// - `needs_migration = true`: data was XOR-encrypted (legacy format, should be re-encrypted)
+///
+/// AES-GCM is authenticated, so if the key is wrong, decryption fails with an
+/// error instead of silently producing garbage (unlike XOR).
+pub fn secure_decrypt(data: &[u8], uuid_key: &[u8]) -> Result<(Vec<u8>, bool), String> {
+    // Try AES-256-GCM first (current format)
+    let aes_key = derive_aes_key(uuid_key)?;
+    if data.len() >= 12 {
+        if let Ok(plaintext) = decrypt(data, &aes_key) {
+            return Ok((plaintext, false));
+        }
+    }
+
+    // Fallback to legacy XOR
+    let plaintext = legacy_encrypt_decrypt(data, uuid_key);
+    Ok((plaintext, true))
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 use serde::Serialize;
 use sqlx::sqlite::SqlitePool;
+use std::os::unix::fs::PermissionsExt;
 use std::process::{Command, Stdio};
 use tauri::State;
 
@@ -47,6 +48,8 @@ pub async fn create_forward(
     std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
     let kubeconfig_path = tmp_dir.join(format!("kubeconfig-{}.yaml", kubeconfig_id));
     std::fs::write(&kubeconfig_path, &content).map_err(|e| e.to_string())?;
+    std::fs::set_permissions(&kubeconfig_path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("Failed to set permissions on temp kubeconfig: {e}"))?;
 
     // Build and spawn the kubectl port-forward command
     let resource = format!("{}/{}", resource_type, resource_name);
